@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent } from 'react'
 import './App.css'
 import {
   fieldGeometry,
@@ -22,6 +22,9 @@ const timelineSets = ['Set 1', 'Set 2', 'Set 3', 'Set 4']
 const fiveYardLinePositions = getFiveYardLinePositions()
 const yardLinePositions = getYardLinePositions()
 const yardNumbers = getYardNumberPositions()
+const minimumZoom = 0.5
+const maximumZoom = 3
+const zoomStep = 0.25
 
 type FieldCanvasProps = {
   mode: 'select' | 'performer'
@@ -40,6 +43,7 @@ function FieldCanvas({
   onPerformerSelect,
   onSelectionClear,
 }: FieldCanvasProps) {
+  const [zoom, setZoom] = useState(1)
   const dragState = useRef<{
     performerId: string
     moved: boolean
@@ -115,20 +119,34 @@ function FieldCanvas({
     onPerformerSelect(performer.id, false)
   }
 
+  const updateZoom = (change: number) => {
+    setZoom((currentZoom) => Math.min(maximumZoom, Math.max(minimumZoom, currentZoom + change)))
+  }
+
   return (
     <section className="field-canvas" aria-label="Marching field canvas">
       <div className="field-canvas__header">
         <span>Field view</span>
+        <div className="zoom-controls" aria-label="Field zoom controls">
+          <button type="button" onClick={() => updateZoom(-zoomStep)} disabled={zoom === minimumZoom} aria-label="Zoom out" title="Zoom out">−</button>
+          <output aria-label="Current zoom">{Math.round(zoom * 100)}%</output>
+          <button type="button" onClick={() => updateZoom(zoomStep)} disabled={zoom === maximumZoom} aria-label="Zoom in" title="Zoom in">+</button>
+          <button type="button" onClick={() => setZoom(1)}>Reset/Fit</button>
+        </div>
         <span className="field-canvas__status">120 × 53⅓ yd</span>
       </div>
-      <svg
-        className="field-canvas__svg"
-        viewBox={`0 0 ${fieldGeometry.svgWidth} ${fieldGeometry.svgHeight}`}
-        role="img"
-        aria-label="Marching football field"
-        data-testid="field-svg"
-        onPointerDown={handleFieldPointerDown}
-      >
+      <div className="field-canvas__viewport" data-testid="field-viewport">
+        <div className="field-canvas__fit">
+          <svg
+            className="field-canvas__svg"
+            style={{ width: `${zoom * 100}%` }}
+            viewBox={`0 0 ${fieldGeometry.svgWidth} ${fieldGeometry.svgHeight}`}
+            role="img"
+            aria-label="Marching football field"
+            data-testid="field-svg"
+            data-zoom={zoom}
+            onPointerDown={handleFieldPointerDown}
+          >
         <title>120-yard marching band football field</title>
         <rect className="field" width={fieldGeometry.svgWidth} height={fieldGeometry.svgHeight} />
         <rect className="field-end-zone" x="0" width={fieldGeometry.endZoneDepthSvg} height={fieldGeometry.svgHeight} />
@@ -191,11 +209,97 @@ function FieldCanvas({
             }}
           >
             <circle cx={performer.x} cy={performer.y} r={performerMarkerRadiusSvg} />
-            <text x={performer.x} y={performer.y} textAnchor="middle" dominantBaseline="central">{performer.label}</text>
+            <text x={performer.x + 9} y={performer.y} dominantBaseline="central">{performer.label}</text>
           </g>
         ))}
-      </svg>
+          </svg>
+        </div>
+      </div>
     </section>
+  )
+}
+
+type PerformerInventoryProps = {
+  performerPositions: readonly Performer[]
+  selectedPerformerIds: readonly string[]
+  onPerformerSelect: (performerId: string, shouldToggle: boolean) => void
+  onPerformerChange: (performerId: string, changes: Pick<Performer, 'label' | 'name' | 'section'>) => void
+}
+
+function PerformerInventory({
+  performerPositions,
+  selectedPerformerIds,
+  onPerformerSelect,
+  onPerformerChange,
+}: PerformerInventoryProps) {
+  const selectFromKeyboard = (event: ReactKeyboardEvent, performerId: string) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      onPerformerSelect(performerId, event.shiftKey)
+    }
+  }
+
+  return (
+    <aside className="performer-inventory" aria-label="Performer inventory">
+      <div className="performer-inventory__header">
+        <h2>Performers</h2>
+        <span>{performerPositions.length}</span>
+      </div>
+      <div className="performer-inventory__list">
+        {performerPositions.map((performer) => (
+          <div
+            className={`inventory-row${selectedPerformerIds.includes(performer.id) ? ' inventory-row--selected' : ''}`}
+            key={performer.id}
+            data-testid={`inventory-${performer.id}`}
+            role="button"
+            tabIndex={0}
+            aria-pressed={selectedPerformerIds.includes(performer.id)}
+            onClick={(event) => onPerformerSelect(performer.id, event.shiftKey)}
+            onKeyDown={(event) => selectFromKeyboard(event, performer.id)}
+          >
+            <label>
+              <span>Label</span>
+              <input
+                className="inventory-row__label"
+                aria-label={`Label for ${performer.label}`}
+                value={performer.label}
+                onChange={(event) => onPerformerChange(performer.id, {
+                  label: event.target.value,
+                  name: performer.name,
+                  section: performer.section,
+                })}
+              />
+            </label>
+            <label>
+              <span>Name</span>
+              <input
+                aria-label={`Name for ${performer.label}`}
+                value={performer.name ?? ''}
+                placeholder="Name"
+                onChange={(event) => onPerformerChange(performer.id, {
+                  label: performer.label,
+                  name: event.target.value,
+                  section: performer.section,
+                })}
+              />
+            </label>
+            <label>
+              <span>Section</span>
+              <input
+                aria-label={`Section for ${performer.label}`}
+                value={performer.section ?? ''}
+                placeholder="Section"
+                onChange={(event) => onPerformerChange(performer.id, {
+                  label: performer.label,
+                  name: performer.name,
+                  section: event.target.value,
+                })}
+              />
+            </label>
+          </div>
+        ))}
+      </div>
+    </aside>
   )
 }
 
@@ -242,6 +346,15 @@ function App() {
         ? currentIds.filter((id) => id !== performerId)
         : [...currentIds, performerId]
     })
+  }
+
+  const updatePerformerMetadata = (
+    performerId: string,
+    changes: Pick<Performer, 'label' | 'name' | 'section'>,
+  ) => {
+    setPerformerPositions((currentPerformers) => currentPerformers.map((performer) =>
+      performer.id === performerId ? { ...performer, ...changes } : performer,
+    ))
   }
 
   return (
@@ -319,6 +432,13 @@ function App() {
             </div>
           </section>
         </div>
+
+        <PerformerInventory
+          performerPositions={performerPositions}
+          selectedPerformerIds={selectedPerformerIds}
+          onPerformerSelect={selectPerformer}
+          onPerformerChange={updatePerformerMetadata}
+        />
       </div>
     </main>
   )

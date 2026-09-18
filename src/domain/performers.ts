@@ -9,12 +9,14 @@ import {
 export type Performer = {
   id: string
   label: string
+  name?: string
+  section?: string
   x: number
   y: number
   verticalReferenceId: VerticalReferenceId
 }
 
-export const performerMarkerRadiusSvg = 12
+export const performerMarkerRadiusSvg = 6
 
 type PerformerPlacement = Pick<Performer, 'x' | 'y' | 'verticalReferenceId'>
 
@@ -22,6 +24,8 @@ export const performers: readonly Performer[] = [
   {
     id: 't1',
     label: 'T1',
+    name: '',
+    section: '',
     x: 600,
     y: fieldGeometry.marchingStepSizeSvg * 42,
     verticalReferenceId: 'backSideline',
@@ -41,6 +45,8 @@ export const createPerformer = (
   return {
     id: `p${placementNumber}`,
     label: `P${placementNumber}`,
+    name: '',
+    section: '',
     ...placement,
   }
 }

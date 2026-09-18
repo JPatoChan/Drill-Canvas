@@ -15,6 +15,131 @@ describe('App', () => {
     expect(screen.queryByLabelText('Selected performers')).not.toBeInTheDocument()
   })
 
+  it('edits performer metadata from the inventory and updates the field immediately', () => {
+    render(<App />)
+
+    const row = screen.getByTestId('inventory-t1')
+    const labelInput = screen.getByLabelText('Label for T1')
+
+    fireEvent.change(labelInput, { target: { value: 'S1' } })
+    fireEvent.change(screen.getByLabelText('Name for S1'), { target: { value: 'Jordan Lee' } })
+    fireEvent.change(screen.getByLabelText('Section for S1'), { target: { value: 'Saxophone' } })
+
+    expect(screen.getByTestId('performer-t1')).toHaveTextContent('S1')
+    expect(labelInput).toHaveValue('S1')
+    expect(screen.getByLabelText('Name for S1')).toHaveValue('Jordan Lee')
+    expect(screen.getByLabelText('Section for S1')).toHaveValue('Saxophone')
+    expect(row).toBeInTheDocument()
+  })
+
+  it('keeps inventory additions and deletions synchronized with performers', () => {
+    render(<App />)
+    const svg = screen.getByTestId('field-svg')
+
+    Object.defineProperty(svg, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 1200, height: 533.3333333333334 }),
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Performer' }))
+    fireEvent(svg, new MouseEvent('pointerdown', { bubbles: true, clientX: 200, clientY: 200 }))
+
+    expect(screen.getByTestId('inventory-p1')).toBeInTheDocument()
+    expect(screen.getByLabelText('Performer inventory')).toHaveTextContent('2')
+    fireEvent.keyDown(window, { key: 'Delete' })
+
+    expect(screen.queryByTestId('inventory-p1')).not.toBeInTheDocument()
+    expect(screen.getByTestId('inventory-t1')).toBeInTheDocument()
+  })
+
+  it('synchronizes field and shift-multiselection through inventory rows', () => {
+    render(<App />)
+    const svg = screen.getByTestId('field-svg')
+    const t1 = screen.getByTestId('performer-t1')
+
+    Object.defineProperty(svg, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 1200, height: 533.3333333333334 }),
+    })
+    Object.defineProperty(t1, 'setPointerCapture', { value: () => undefined })
+    fireEvent(t1, new MouseEvent('pointerdown', { bubbles: true }))
+    expect(screen.getByTestId('inventory-t1')).toHaveClass('inventory-row--selected')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Performer' }))
+    fireEvent(svg, new MouseEvent('pointerdown', { bubbles: true, clientX: 200, clientY: 200 }))
+    fireEvent.click(screen.getByTestId('inventory-t1'), { shiftKey: true })
+
+    expect(screen.getByLabelText('Selected performers')).toHaveTextContent('2 performers selected')
+    expect(screen.getByTestId('performer-t1')).toHaveClass('performer-marker--selected')
+    expect(screen.getByTestId('performer-p1')).toHaveClass('performer-marker--selected')
+
+    fireEvent.click(screen.getByTestId('inventory-t1'))
+    expect(screen.getByLabelText('Selected performer')).toHaveTextContent('T1')
+    expect(screen.getByTestId('performer-p1')).not.toHaveClass('performer-marker--selected')
+  })
+
+  it('renders compact performer markers', () => {
+    render(<App />)
+
+    const performer = screen.getByTestId('performer-t1')
+    expect(performer.querySelector('circle')).toHaveAttribute('r', '6')
+    expect(performer.querySelector('text')).toHaveAttribute('x', '609')
+  })
+
+  it('zooms in, out, and resets without changing performer coordinates', () => {
+    render(<App />)
+    const svg = screen.getByTestId('field-svg')
+    const circle = screen.getByTestId('performer-t1').querySelector('circle')
+    const initialPosition = { x: circle?.getAttribute('cx'), y: circle?.getAttribute('cy') }
+
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+    expect(screen.getByLabelText('Current zoom')).toHaveTextContent('125%')
+    expect(svg).toHaveAttribute('data-zoom', '1.25')
+    expect(circle).toHaveAttribute('cx', initialPosition.x)
+    expect(circle).toHaveAttribute('cy', initialPosition.y)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom out' }))
+    expect(screen.getByLabelText('Current zoom')).toHaveTextContent('100%')
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Reset/Fit' }))
+    expect(screen.getByLabelText('Current zoom')).toHaveTextContent('100%')
+  })
+
+  it('places a performer at the correct field coordinate while zoomed', () => {
+    render(<App />)
+    const svg = screen.getByTestId('field-svg')
+
+    for (let step = 0; step < 4; step += 1) {
+      fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+    }
+    Object.defineProperty(svg, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 2400, height: 1066.6666666666667 }),
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Performer' }))
+    fireEvent(svg, new MouseEvent('pointerdown', { bubbles: true, clientX: 400, clientY: 400 }))
+
+    const circle = screen.getByTestId('performer-p1').querySelector('circle')
+    expect(circle).toHaveAttribute('cx', '200')
+    expect(circle).toHaveAttribute('cy', '202.7777777777778')
+  })
+
+  it('drags a performer to the correct field coordinate while zoomed', () => {
+    render(<App />)
+    const svg = screen.getByTestId('field-svg')
+    const performer = screen.getByTestId('performer-t1')
+
+    for (let step = 0; step < 4; step += 1) {
+      fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+    }
+    Object.defineProperty(svg, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 2400, height: 1066.6666666666667 }),
+    })
+    Object.defineProperty(performer, 'setPointerCapture', { value: () => undefined })
+    Object.defineProperty(performer, 'hasPointerCapture', { value: () => true })
+    fireEvent(performer, new MouseEvent('pointerdown', { bubbles: true, clientX: 1200, clientY: 525 }))
+    fireEvent(performer, new MouseEvent('pointermove', { bubbles: true, clientX: 1400, clientY: 525 }))
+
+    expect(performer.querySelector('circle')).toHaveAttribute('cx', '700')
+    expect(performer.querySelector('circle')).toHaveAttribute('cy', '265.2777777777778')
+  })
+
   it('updates T1 after a pointer drag in responsive SVG coordinates', () => {
     const { container } = render(<App />)
     const svg = container.querySelector('svg')
