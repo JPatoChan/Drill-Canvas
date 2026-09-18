@@ -15,6 +15,164 @@ describe('App', () => {
     expect(screen.queryByLabelText('Selected performers')).not.toBeInTheDocument()
   })
 
+  it('starts with one active opening set at zero counts', () => {
+    render(<App />)
+
+    expect(screen.getAllByRole('listitem')).toHaveLength(1)
+    expect(screen.getByRole('button', { name: 'Set 1' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('drill-set-set-1')).toHaveTextContent('0 counts')
+    expect(screen.queryByLabelText('Counts for Set 1')).not.toBeInTheDocument()
+  })
+
+  it('adds an active Set 2 with a copied formation and 16 counts', () => {
+    render(<App />)
+    const initialX = screen.getByTestId('performer-t1').querySelector('circle')?.getAttribute('cx')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add set' }))
+
+    expect(screen.getAllByRole('listitem')).toHaveLength(2)
+    expect(screen.getByRole('button', { name: 'Set 1' })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByRole('button', { name: 'Set 2' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByLabelText('Counts for Set 2')).toHaveValue(16)
+    expect(screen.getByTestId('performer-t1').querySelector('circle')).toHaveAttribute('cx', initialX)
+  })
+
+  it('edits transition counts while enforcing a minimum of one', () => {
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Add set' }))
+
+    const counts = screen.getByLabelText('Counts for Set 2')
+    fireEvent.change(counts, { target: { value: '24' } })
+    expect(counts).toHaveValue(24)
+
+    fireEvent.change(counts, { target: { value: '0' } })
+    expect(counts).toHaveValue(1)
+    expect(screen.getByTestId('drill-set-set-1')).toHaveTextContent('0 counts')
+  })
+
+  it('restores independent performer positions when switching sets', () => {
+    render(<App />)
+    const svg = screen.getByTestId('field-svg')
+    const performer = screen.getByTestId('performer-t1')
+
+    Object.defineProperty(svg, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 1200, height: 533.3333333333334 }),
+    })
+    Object.defineProperty(performer, 'setPointerCapture', { value: () => undefined })
+    Object.defineProperty(performer, 'hasPointerCapture', { value: () => true })
+    fireEvent.click(screen.getByRole('button', { name: 'Add set' }))
+    fireEvent(performer, new MouseEvent('pointerdown', { bubbles: true, clientX: 600, clientY: 262.5 }))
+    fireEvent(performer, new MouseEvent('pointermove', { bubbles: true, clientX: 700, clientY: 262.5 }))
+    expect(performer.querySelector('circle')).toHaveAttribute('cx', '700')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set 1' }))
+    expect(performer.querySelector('circle')).toHaveAttribute('cx', '600')
+    fireEvent.click(screen.getByRole('button', { name: 'Set 2' }))
+    expect(performer.querySelector('circle')).toHaveAttribute('cx', '700')
+  })
+
+  it('limits group movement to the active set', () => {
+    render(<App />)
+    const svg = screen.getByTestId('field-svg')
+
+    Object.defineProperty(svg, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 1200, height: 533.3333333333334 }),
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Performer' }))
+    fireEvent(svg, new MouseEvent('pointerdown', { bubbles: true, clientX: 200, clientY: 200 }))
+    fireEvent.click(screen.getByRole('button', { name: 'Select' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add set' }))
+
+    const t1 = screen.getByTestId('performer-t1')
+    const p1 = screen.getByTestId('performer-p1')
+    for (const performer of [t1, p1]) {
+      Object.defineProperty(performer, 'setPointerCapture', { value: () => undefined })
+    }
+    Object.defineProperty(t1, 'hasPointerCapture', { value: () => true })
+    fireEvent(t1, new MouseEvent('pointerdown', { bubbles: true }))
+    fireEvent(p1, new MouseEvent('pointerdown', { bubbles: true, shiftKey: true }))
+    fireEvent(t1, new MouseEvent('pointermove', { bubbles: true, clientX: 700, clientY: 362.5 }))
+    expect(t1.querySelector('circle')).toHaveAttribute('cx', '700')
+    expect(p1.querySelector('circle')).toHaveAttribute('cx', '300')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set 1' }))
+    expect(t1.querySelector('circle')).toHaveAttribute('cx', '600')
+    expect(p1.querySelector('circle')).toHaveAttribute('cx', '200')
+  })
+
+  it('copies the edited active formation when adding another set', () => {
+    render(<App />)
+    const svg = screen.getByTestId('field-svg')
+    const performer = screen.getByTestId('performer-t1')
+
+    Object.defineProperty(svg, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 1200, height: 533.3333333333334 }),
+    })
+    Object.defineProperty(performer, 'setPointerCapture', { value: () => undefined })
+    Object.defineProperty(performer, 'hasPointerCapture', { value: () => true })
+    fireEvent.click(screen.getByRole('button', { name: 'Add set' }))
+    fireEvent(performer, new MouseEvent('pointerdown', { bubbles: true }))
+    fireEvent(performer, new MouseEvent('pointermove', { bubbles: true, clientX: 700, clientY: 262.5 }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add set' }))
+
+    expect(screen.getByRole('button', { name: 'Set 3' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('performer-t1').querySelector('circle')).toHaveAttribute('cx', '700')
+    expect(screen.getByLabelText('Counts for Set 3')).toHaveValue(16)
+  })
+
+  it('backfills new performers into existing sets at their creation position', () => {
+    render(<App />)
+    const svg = screen.getByTestId('field-svg')
+
+    Object.defineProperty(svg, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 1200, height: 533.3333333333334 }),
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Add set' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Performer' }))
+    fireEvent(svg, new MouseEvent('pointerdown', { bubbles: true, clientX: 300, clientY: 300 }))
+    expect(screen.getByTestId('performer-p1').querySelector('circle')).toHaveAttribute('cx', '300')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set 1' }))
+    expect(screen.getByTestId('performer-p1').querySelector('circle')).toHaveAttribute('cx', '300')
+    expect(screen.getByTestId('inventory-p1')).toBeInTheDocument()
+  })
+
+  it('deletes performers from every set and keeps metadata shared', () => {
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Add set' }))
+
+    fireEvent.change(screen.getByLabelText('Label for T1'), { target: { value: 'Lead' } })
+    expect(screen.getByTestId('performer-t1')).toHaveTextContent('Lead')
+    fireEvent.click(screen.getByRole('button', { name: 'Set 1' }))
+    expect(screen.getByTestId('performer-t1')).toHaveTextContent('Lead')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set 2' }))
+    const performer = screen.getByTestId('performer-t1')
+    Object.defineProperty(performer, 'setPointerCapture', { value: () => undefined })
+    fireEvent(performer, new MouseEvent('pointerdown', { bubbles: true }))
+    fireEvent.keyDown(window, { key: 'Delete' })
+    expect(screen.queryByTestId('performer-t1')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('inventory-t1')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set 1' }))
+    expect(screen.queryByTestId('performer-t1')).not.toBeInTheDocument()
+  })
+
+  it('clears selection but preserves zoom when switching sets', () => {
+    render(<App />)
+    const performer = screen.getByTestId('performer-t1')
+
+    Object.defineProperty(performer, 'setPointerCapture', { value: () => undefined })
+    fireEvent(performer, new MouseEvent('pointerdown', { bubbles: true }))
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add set' }))
+
+    expect(screen.queryByLabelText('Selected performer')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Current zoom')).toHaveTextContent('125%')
+    fireEvent.click(screen.getByRole('button', { name: 'Set 1' }))
+    expect(screen.getByLabelText('Current zoom')).toHaveTextContent('125%')
+  })
+
   it('edits performer metadata from the inventory and updates the field immediately', () => {
     render(<App />)
 

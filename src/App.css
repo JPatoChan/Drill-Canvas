@@ -111,8 +111,10 @@
 .set-track { display: flex; align-items: stretch; gap: 8px; min-width: max-content; }
 .set-card { width: 110px; height: 70px; padding: 10px; display: flex; flex-direction: column; justify-content: space-between; border: 1px solid #d2d9da; border-radius: 4px; background: #ffffff; color: #425156; font-size: 0.8rem; }
 .set-card--active { border-color: #3c746e; box-shadow: inset 0 3px #3c746e; color: #173f3d; }
+.set-card__select { padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .set-card small { color: #839095; font-size: 0.67rem; }
-.set-track__empty { align-self: center; margin-left: 8px; color: #819095; font-size: 0.78rem; }
+.set-card__counts { display: flex; align-items: center; gap: 4px; color: #839095; font-size: 0.67rem; }
+.set-card__counts input { width: 42px; height: 23px; padding: 2px 3px; border: 1px solid #c5ced0; border-radius: 3px; color: #34494d; font: inherit; font-variant-numeric: tabular-nums; }
 
 @media (max-width: 700px) {
   .app-header { grid-template-columns: 1fr auto; }

@@ -16,15 +16,27 @@ import {
   performers,
   type Performer,
 } from './domain/performers'
+import {
+  createNextDrillSet,
+  getPerformerMetadata,
+  getPerformerPosition,
+  getPerformersForSet,
+  type DrillSet,
+} from './domain/drillSets'
 
 const toolbarItems = ['Select', 'Performer', 'Path', 'Measure']
-const timelineSets = ['Set 1', 'Set 2', 'Set 3', 'Set 4']
 const fiveYardLinePositions = getFiveYardLinePositions()
 const yardLinePositions = getYardLinePositions()
 const yardNumbers = getYardNumberPositions()
 const minimumZoom = 0.5
 const maximumZoom = 3
 const zoomStep = 0.25
+const initialDrillSet: DrillSet = {
+  id: 'set-1',
+  name: 'Set 1',
+  counts: 0,
+  performerPositions: performers.map(getPerformerPosition),
+}
 
 type FieldCanvasProps = {
   mode: 'select' | 'performer'
@@ -304,9 +316,13 @@ function PerformerInventory({
 }
 
 function App() {
-  const [performerPositions, setPerformerPositions] = useState(performers)
+  const [performerMetadata, setPerformerMetadata] = useState(() => performers.map(getPerformerMetadata))
+  const [drillSets, setDrillSets] = useState<DrillSet[]>([initialDrillSet])
+  const [activeSetId, setActiveSetId] = useState(initialDrillSet.id)
   const [selectedPerformerIds, setSelectedPerformerIds] = useState<string[]>([])
   const [mode, setMode] = useState<'select' | 'performer'>('select')
+  const activeSet = drillSets.find(({ id }) => id === activeSetId) ?? drillSets[0]
+  const performerPositions = getPerformersForSet(performerMetadata, activeSet)
   const selectedPerformer = selectedPerformerIds.length === 1
     ? performerPositions.find((performer) => performer.id === selectedPerformerIds[0])
     : undefined
@@ -326,9 +342,15 @@ function App() {
         return
       }
 
-      setPerformerPositions((currentPerformers) =>
-        currentPerformers.filter((performer) => !selectedPerformerIds.includes(performer.id)),
+      setPerformerMetadata((currentMetadata) =>
+        currentMetadata.filter((performer) => !selectedPerformerIds.includes(performer.id)),
       )
+      setDrillSets((currentSets) => currentSets.map((drillSet) => ({
+        ...drillSet,
+        performerPositions: drillSet.performerPositions.filter(
+          ({ performerId }) => !selectedPerformerIds.includes(performerId),
+        ),
+      })))
       setSelectedPerformerIds([])
     }
 
@@ -352,8 +374,56 @@ function App() {
     performerId: string,
     changes: Pick<Performer, 'label' | 'name' | 'section'>,
   ) => {
-    setPerformerPositions((currentPerformers) => currentPerformers.map((performer) =>
+    setPerformerMetadata((currentPerformers) => currentPerformers.map((performer) =>
       performer.id === performerId ? { ...performer, ...changes } : performer,
+    ))
+  }
+
+  const updateActivePerformerPositions = (nextPerformers: Performer[]) => {
+    setDrillSets((currentSets) => {
+      const existingIds = new Set(currentSets.flatMap((drillSet) =>
+        drillSet.performerPositions.map(({ performerId }) => performerId),
+      ))
+      const newPerformers = nextPerformers.filter(({ id }) => !existingIds.has(id))
+
+      // A new production performer starts at the creation position in every existing set.
+      return currentSets.map((drillSet) => ({
+        ...drillSet,
+        performerPositions: drillSet.id === activeSetId
+          ? nextPerformers.map(getPerformerPosition)
+          : [...drillSet.performerPositions, ...newPerformers.map(getPerformerPosition)],
+      }))
+    })
+    setPerformerMetadata((currentMetadata) => {
+      const existingIds = new Set(currentMetadata.map(({ id }) => id))
+      const additions = nextPerformers.filter(({ id }) => !existingIds.has(id)).map(getPerformerMetadata)
+
+      return additions.length > 0 ? [...currentMetadata, ...additions] : currentMetadata
+    })
+  }
+
+  const addDrillSet = () => {
+    const newSet = createNextDrillSet(drillSets, activeSet)
+
+    setDrillSets((currentSets) => [...currentSets, newSet])
+    setActiveSetId(newSet.id)
+    setSelectedPerformerIds([])
+  }
+
+  const activateDrillSet = (drillSetId: string) => {
+    setActiveSetId(drillSetId)
+    setSelectedPerformerIds([])
+  }
+
+  const updateDrillSetCounts = (drillSetId: string, counts: number) => {
+    if (!Number.isFinite(counts)) {
+      return
+    }
+
+    setDrillSets((currentSets) => currentSets.map((drillSet, index) =>
+      drillSet.id === drillSetId && index > 0
+        ? { ...drillSet, counts: Math.max(1, Math.floor(counts)) }
+        : drillSet,
     ))
   }
 
@@ -408,7 +478,7 @@ function App() {
             mode={mode}
             performerPositions={performerPositions}
             selectedPerformerIds={selectedPerformerIds}
-            onPerformerPositionsChange={setPerformerPositions}
+            onPerformerPositionsChange={updateActivePerformerPositions}
             onPerformerSelect={selectPerformer}
             onSelectionClear={() => setSelectedPerformerIds([])}
           />
@@ -419,16 +489,40 @@ function App() {
                 <span className="timeline__eyebrow">Production</span>
                 <h1>Drill sets</h1>
               </div>
-              <button className="add-set" type="button">Add set</button>
+              <button className="add-set" type="button" onClick={addDrillSet}>Add set</button>
             </div>
-            <div className="set-track" role="list" aria-label="Placeholder drill sets">
-              {timelineSets.map((set, index) => (
-                <div className={`set-card${index === 0 ? ' set-card--active' : ''}`} role="listitem" key={set}>
-                  <span>{set}</span>
-                  <small>{index === 0 ? '0 counts' : '+16 counts'}</small>
+            <div className="set-track" role="list" aria-label="Drill sets">
+              {drillSets.map((drillSet, index) => (
+                <div
+                  className={`set-card${drillSet.id === activeSetId ? ' set-card--active' : ''}`}
+                  role="listitem"
+                  key={drillSet.id}
+                  data-testid={`drill-set-${drillSet.id}`}
+                >
+                  <button
+                    className="set-card__select"
+                    type="button"
+                    aria-pressed={drillSet.id === activeSetId}
+                    onClick={() => activateDrillSet(drillSet.id)}
+                  >
+                    <span>{drillSet.name}</span>
+                  </button>
+                  {index === 0 ? (
+                    <small>0 counts</small>
+                  ) : (
+                    <label className="set-card__counts">
+                      <input
+                        type="number"
+                        min="1"
+                        value={drillSet.counts}
+                        aria-label={`Counts for ${drillSet.name}`}
+                        onChange={(event) => updateDrillSetCounts(drillSet.id, event.target.valueAsNumber)}
+                      />
+                      <span>counts</span>
+                    </label>
+                  )}
                 </div>
               ))}
-              <div className="set-track__empty">Timeline ready for your first chart</div>
             </div>
           </section>
         </div>
