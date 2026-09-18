@@ -1,6 +1,7 @@
 import type { DrillSet, PerformerMetadata } from './drillSets'
 
 export type EditorSnapshot = {
+  productionName: string
   performerMetadata: PerformerMetadata[]
   drillSets: DrillSet[]
   activeSetId: string
@@ -16,6 +17,7 @@ export type EditorHistoryAction =
   | { type: 'commit', snapshot: EditorSnapshot }
   | { type: 'replace', snapshot: EditorSnapshot }
   | { type: 'checkpoint', snapshot: EditorSnapshot }
+  | { type: 'reset', snapshot: EditorSnapshot }
   | { type: 'undo' }
   | { type: 'redo' }
 
@@ -47,6 +49,10 @@ export const reduceEditorHistory = (
       present: history.present,
       future: [],
     }
+  }
+
+  if (action.type === 'reset') {
+    return createEditorHistory(action.snapshot)
   }
 
   if (action.type === 'undo') {

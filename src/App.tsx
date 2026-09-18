@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent } from 'react'
+import { useEffect, useReducer, useRef, useState, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent } from 'react'
 import './App.css'
 import {
   fieldGeometry,
@@ -32,6 +32,12 @@ import {
 } from './domain/playback'
 import { applyFormationOperation, duplicateSelectedPerformers, type FormationOperation } from './domain/formations'
 import { createEditorHistory, reduceEditorHistory, type EditorSnapshot } from './domain/editorHistory'
+import {
+  parseProject,
+  restoreLocalProject,
+  saveProjectLocally,
+  serializeProject,
+} from './domain/projectPersistence'
 
 const toolbarItems = ['Select', 'Performer', 'Path', 'Measure']
 const fiveYardLinePositions = getFiveYardLinePositions()
@@ -46,6 +52,16 @@ const initialDrillSet: DrillSet = {
   counts: 0,
   performerPositions: performers.map(getPerformerPosition),
 }
+
+const createFreshProject = (): EditorSnapshot => ({
+  productionName: 'Untitled Production',
+  performerMetadata: performers.map(getPerformerMetadata),
+  drillSets: [{
+    ...initialDrillSet,
+    performerPositions: initialDrillSet.performerPositions.map((position) => ({ ...position })),
+  }],
+  activeSetId: initialDrillSet.id,
+})
 
 type PlaybackMode = 'transition' | 'production' | null
 
@@ -436,14 +452,31 @@ function PerformerInventory({
 }
 
 function App() {
-  const [history, dispatchHistory] = useReducer(reduceEditorHistory, {
-    performerMetadata: performers.map(getPerformerMetadata),
-    drillSets: [initialDrillSet],
-    activeSetId: initialDrillSet.id,
-  }, createEditorHistory)
+  const [initialProject] = useState(() => {
+    try {
+      return { snapshot: restoreLocalProject() ?? createFreshProject(), error: '' }
+    } catch (error) {
+      return {
+        snapshot: createFreshProject(),
+        error: error instanceof Error ? `Unable to restore the saved project: ${error.message}` : 'Unable to restore the saved project.',
+      }
+    }
+  })
+  const [history, dispatchHistory] = useReducer(
+    reduceEditorHistory,
+    initialProject.snapshot,
+    createEditorHistory,
+  )
   const dragStartSnapshot = useRef<EditorSnapshot | null>(null)
   const setTrackScroller = useRef<HTMLDivElement>(null)
-  const { performerMetadata, drillSets, activeSetId } = history.present
+  const importInput = useRef<HTMLInputElement>(null)
+  const [explicitlySavedProject, setExplicitlySavedProject] = useState(
+    serializeProject(initialProject.snapshot),
+  )
+  const [projectError, setProjectError] = useState(initialProject.error)
+  const { productionName, performerMetadata, drillSets, activeSetId } = history.present
+  const serializedProject = serializeProject(history.present)
+  const hasUnsavedChanges = serializedProject !== explicitlySavedProject
   const [selectedPerformerIds, setSelectedPerformerIds] = useState<string[]>([])
   const [mode, setMode] = useState<'select' | 'performer'>('select')
   const [playbackMode, setPlaybackMode] = useState<PlaybackMode>(null)
@@ -488,6 +521,14 @@ function App() {
   const selectedPerformer = selectedPerformerIds.length === 1
     ? performerPositions.find((performer) => performer.id === selectedPerformerIds[0])
     : undefined
+
+  useEffect(() => {
+    try {
+      saveProjectLocally(history.present)
+    } catch {
+      setProjectError('Unable to save the project in local browser storage.')
+    }
+  }, [history.present])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -785,6 +826,68 @@ function App() {
     setSelectedPerformerIds(duplicateIds)
   }
 
+  const resetTransientState = (snapshot: EditorSnapshot) => {
+    setSelectedPerformerIds([])
+    setPlaybackMode(null)
+    setIsPlaying(false)
+    setCurrentCount(snapshot.drillSets.find(({ id }) => id === snapshot.activeSetId)?.counts ?? 0)
+    setProductionCount(0)
+  }
+
+  const saveProject = () => {
+    try {
+      saveProjectLocally(history.present)
+      setExplicitlySavedProject(serializedProject)
+      setProjectError('')
+    } catch {
+      setProjectError('Unable to save the project in local browser storage.')
+    }
+  }
+
+  const newProject = () => {
+    if (hasUnsavedChanges && !window.confirm('Create a new project? Unsaved changes will be lost.')) {
+      return
+    }
+
+    const snapshot = createFreshProject()
+    dispatchHistory({ type: 'reset', snapshot })
+    setExplicitlySavedProject(serializeProject(snapshot))
+    resetTransientState(snapshot)
+    setProjectError('')
+  }
+
+  const exportProject = () => {
+    const blob = new Blob([serializeProject(history.present)], { type: 'application/json' })
+    const downloadUrl = URL.createObjectURL(blob)
+    const download = document.createElement('a')
+    const safeName = productionName.trim().replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase()
+
+    download.href = downloadUrl
+    download.download = `${safeName || 'drillcanvas-project'}.drillcanvas.json`
+    download.click()
+    URL.revokeObjectURL(downloadUrl)
+  }
+
+  const importProject = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+
+    if (!file) {
+      return
+    }
+
+    try {
+      const snapshot = parseProject(await file.text())
+      dispatchHistory({ type: 'reset', snapshot })
+      setExplicitlySavedProject(serializeProject(snapshot))
+      resetTransientState(snapshot)
+      setProjectError('')
+    } catch (error) {
+      setProjectError(error instanceof Error ? error.message : 'Unable to import the selected project.')
+    } finally {
+      event.target.value = ''
+    }
+  }
+
   return (
     <main className="app-shell">
       <header className="app-header">
@@ -792,13 +895,43 @@ function App() {
           <span className="brand__mark" aria-hidden="true"><i /><i /><i /></span>
           <span>DrillCanvas</span>
         </div>
-        <div className="show-name">Untitled Production</div>
+        <input
+          className="show-name"
+          aria-label="Production name"
+          value={productionName}
+          disabled={isPreviewing}
+          onChange={(event) => dispatchHistory({
+            type: 'commit',
+            snapshot: { ...history.present, productionName: event.target.value },
+          })}
+        />
         <div className="header-actions">
           <button type="button" onClick={() => navigateHistory('undo')} disabled={history.past.length === 0 || isPreviewing}>Undo</button>
           <button type="button" onClick={() => navigateHistory('redo')} disabled={history.future.length === 0 || isPreviewing}>Redo</button>
+          <button type="button" onClick={saveProject} disabled={!hasUnsavedChanges || isPreviewing}>Save</button>
+          <output
+            className={`save-status${hasUnsavedChanges ? ' save-status--dirty' : ''}`}
+            aria-label="Save status"
+            aria-live="polite"
+          >
+            {hasUnsavedChanges ? 'Unsaved changes' : 'Saved'}
+          </output>
+          <button type="button" onClick={newProject} disabled={isPreviewing}>New</button>
+          <button type="button" onClick={exportProject} disabled={isPreviewing}>Export</button>
+          <button type="button" onClick={() => importInput.current?.click()} disabled={isPreviewing}>Import</button>
+          <input
+            className="project-import"
+            ref={importInput}
+            type="file"
+            accept="application/json,.json,.drillcanvas.json"
+            aria-label="Import project file"
+            onChange={importProject}
+          />
           <button className="header-action" type="button">Share</button>
         </div>
       </header>
+
+      {projectError && <div className="project-error" role="alert">{projectError}</div>}
 
       <div className="editor-layout">
         <aside className="toolbar" aria-label="Editor tools">

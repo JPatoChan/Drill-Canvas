@@ -2,7 +2,9 @@
 
 DrillCanvas is an open-source web application for designing, visualizing, and animating marching band drill.
 
-This repository currently provides the application shell: an editor-oriented workspace with a toolbar, central field canvas, and timeline panel. Drill editing capabilities will be added in later iterations.
+The editor supports performer placement and metadata, formations, drill sets, transition and full-production playback, zoom, box selection, and undo/redo.
+
+Projects autosave to the current browser's local storage. Use **Save** to mark the current project as an explicit baseline, **New** to start over, and **Export**/**Import** to move human-readable schema-versioned JSON project files between browsers or devices. No project data is sent to a backend.
 
 ## Tech Stack
 

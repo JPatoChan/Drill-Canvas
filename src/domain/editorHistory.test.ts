@@ -2,6 +2,7 @@ import { createEditorHistory, reduceEditorHistory, type EditorSnapshot } from '.
 
 describe('editor history', () => {
   const snapshot = (activeSetId: string): EditorSnapshot => ({
+    productionName: 'Test Production',
     performerMetadata: [],
     drillSets: [],
     activeSetId,
