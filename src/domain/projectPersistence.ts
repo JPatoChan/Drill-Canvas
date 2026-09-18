@@ -1,16 +1,19 @@
 import { fieldGeometry } from './fieldGeometry'
 import type { DrillSet, PerformerMetadata, PerformerPosition } from './drillSets'
 import type { EditorSnapshot } from './editorHistory'
+import type { MusicEvent, MusicMeasure, MusicScore, MusicTempoEvent, MusicTimeSignature } from './music'
 
-export const projectSchemaVersion = 1 as const
+// Schema v1 projects have no music field. Schema v2 adds an optional normalized music score.
+export const projectSchemaVersion = 2 as const
 export const projectStorageKey = 'drillcanvas.project.v1'
 
 export type DrillCanvasProject = {
-  schemaVersion: typeof projectSchemaVersion
+  schemaVersion: 1 | typeof projectSchemaVersion
   productionName: string
   performers: PerformerMetadata[]
   drillSets: DrillSet[]
   activeSetId: string
+  music: MusicScore | null
 }
 
 const verticalReferenceIds = new Set<string>([
@@ -62,12 +65,44 @@ const isDrillSet = (value: unknown, index: number, performerIds: Set<string>): v
   return new Set(positionIds).size === positionIds.length
 }
 
+const isTempoEvent = (value: unknown): value is MusicTempoEvent => isRecord(value)
+  && typeof value.beat === 'number' && Number.isFinite(value.beat)
+  && typeof value.bpm === 'number' && Number.isFinite(value.bpm) && value.bpm > 0
+
+const isTimeSignature = (value: unknown): value is MusicTimeSignature => isRecord(value)
+  && typeof value.beat === 'number' && Number.isFinite(value.beat)
+  && typeof value.numerator === 'number' && Number.isInteger(value.numerator) && value.numerator > 0
+  && typeof value.denominator === 'number' && Number.isInteger(value.denominator) && value.denominator > 0
+
+const isMeasure = (value: unknown): value is MusicMeasure => isRecord(value)
+  && typeof value.index === 'number' && Number.isInteger(value.index)
+  && typeof value.startBeat === 'number' && Number.isFinite(value.startBeat)
+  && typeof value.beatsInMeasure === 'number' && Number.isFinite(value.beatsInMeasure)
+
+const isMusicEvent = (value: unknown): value is MusicEvent => isRecord(value)
+  && (value.type === 'note' || value.type === 'rest')
+  && typeof value.startBeat === 'number' && Number.isFinite(value.startBeat)
+  && typeof value.durationBeats === 'number' && Number.isFinite(value.durationBeats) && value.durationBeats > 0
+  && (value.midiPitch === null || (typeof value.midiPitch === 'number' && Number.isInteger(value.midiPitch)))
+
+const isMusicScore = (value: unknown): value is MusicScore => isRecord(value)
+  && typeof value.title === 'string'
+  && Array.isArray(value.tempoMap) && value.tempoMap.length > 0 && value.tempoMap.every(isTempoEvent)
+  && Array.isArray(value.timeSignatures) && value.timeSignatures.length > 0 && value.timeSignatures.every(isTimeSignature)
+  && Array.isArray(value.measures) && value.measures.every(isMeasure)
+  && Array.isArray(value.events) && value.events.every(isMusicEvent)
+  && typeof value.totalBeats === 'number' && Number.isFinite(value.totalBeats)
+
+const isMusicField = (value: unknown): value is MusicScore | null =>
+  value === null || value === undefined || isMusicScore(value)
+
 export const projectFromSnapshot = (snapshot: EditorSnapshot): DrillCanvasProject => ({
   schemaVersion: projectSchemaVersion,
   productionName: snapshot.productionName,
   performers: snapshot.performerMetadata,
   drillSets: snapshot.drillSets,
   activeSetId: snapshot.activeSetId,
+  music: snapshot.music,
 })
 
 export const snapshotFromProject = (project: DrillCanvasProject): EditorSnapshot => ({
@@ -75,6 +110,7 @@ export const snapshotFromProject = (project: DrillCanvasProject): EditorSnapshot
   performerMetadata: project.performers,
   drillSets: project.drillSets,
   activeSetId: project.activeSetId,
+  music: project.music ?? null,
 })
 
 export const serializeProject = (snapshot: EditorSnapshot) =>
@@ -93,8 +129,12 @@ export const parseProject = (projectText: string): EditorSnapshot => {
     throw new Error('The selected file is not a DrillCanvas project.')
   }
 
-  if (value.schemaVersion !== projectSchemaVersion) {
+  if (value.schemaVersion !== projectSchemaVersion && value.schemaVersion !== 1) {
     throw new Error(`Unsupported project schema version: ${String(value.schemaVersion)}.`)
+  }
+
+  if (!isMusicField(value.music)) {
+    throw new Error('The project contains invalid music data.')
   }
 
   if (typeof value.productionName !== 'string'

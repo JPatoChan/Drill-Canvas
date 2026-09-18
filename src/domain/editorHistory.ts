@@ -1,10 +1,12 @@
 import type { DrillSet, PerformerMetadata } from './drillSets'
+import type { MusicScore } from './music'
 
 export type EditorSnapshot = {
   productionName: string
   performerMetadata: PerformerMetadata[]
   drillSets: DrillSet[]
   activeSetId: string
+  music: MusicScore | null
 }
 
 export type EditorHistory = {

@@ -6,6 +6,7 @@ describe('editor history', () => {
     performerMetadata: [],
     drillSets: [],
     activeSetId,
+    music: null,
   })
 
   it('undoes and redoes committed snapshots', () => {

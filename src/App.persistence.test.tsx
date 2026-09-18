@@ -22,6 +22,7 @@ const importedSnapshot: EditorSnapshot = {
     },
   ],
   activeSetId: 'set-2',
+  music: null,
 }
 
 const importText = async (text: string) => {

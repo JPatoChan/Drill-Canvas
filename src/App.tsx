@@ -24,7 +24,6 @@ import {
   type DrillSet,
 } from './domain/drillSets'
 import {
-  getMillisecondsPerCount,
   getProductionPerformerPositions,
   getProductionPlaybackPoint,
   getTotalProductionCounts,
@@ -38,6 +37,14 @@ import {
   saveProjectLocally,
   serializeProject,
 } from './domain/projectPersistence'
+import {
+  getActiveTempoBpm,
+  getCountForElapsedMilliseconds,
+  getMeasurePositionForBeat,
+  getMillisecondsPerBeatAt,
+  parseMuseScoreFile,
+} from './domain/music'
+import { MusicSynthesizer } from './domain/musicSynth'
 
 const toolbarItems = ['Select', 'Performer', 'Path', 'Measure']
 const fiveYardLinePositions = getFiveYardLinePositions()
@@ -61,6 +68,7 @@ const createFreshProject = (): EditorSnapshot => ({
     performerPositions: initialDrillSet.performerPositions.map((position) => ({ ...position })),
   }],
   activeSetId: initialDrillSet.id,
+  music: null,
 })
 
 type PlaybackMode = 'transition' | 'production' | null
@@ -470,11 +478,14 @@ function App() {
   const dragStartSnapshot = useRef<EditorSnapshot | null>(null)
   const setTrackScroller = useRef<HTMLDivElement>(null)
   const importInput = useRef<HTMLInputElement>(null)
+  const importMusicInput = useRef<HTMLInputElement>(null)
+  const musicSynth = useRef<MusicSynthesizer>(new MusicSynthesizer())
   const [explicitlySavedProject, setExplicitlySavedProject] = useState(
     serializeProject(initialProject.snapshot),
   )
   const [projectError, setProjectError] = useState(initialProject.error)
-  const { productionName, performerMetadata, drillSets, activeSetId } = history.present
+  const [musicError, setMusicError] = useState('')
+  const { productionName, performerMetadata, drillSets, activeSetId, music } = history.present
   const serializedProject = serializeProject(history.present)
   const hasUnsavedChanges = serializedProject !== explicitlySavedProject
   const [selectedPerformerIds, setSelectedPerformerIds] = useState<string[]>([])
@@ -597,17 +608,27 @@ function App() {
       return
     }
 
+    // Production playback is the authoritative clock for both drill animation and music: elapsed
+    // real time is derived once per frame and used to drive both, so they cannot drift apart.
     const startedAt = performance.now()
     const startingCount = playbackMode === 'production' ? productionCount : currentCount
     const finalCount = playbackMode === 'production' ? totalProductionCounts : activeSet.counts
+    const activeMusic = playbackMode === 'production' ? music : null
     let animationFrame = 0
 
     const updatePlayback = (timestamp: number) => {
-      const elapsedCounts = (timestamp - startedAt) / getMillisecondsPerCount(tempo)
-      const nextCount = Math.min(finalCount, startingCount + elapsedCounts)
+      const elapsedMilliseconds = timestamp - startedAt
+      const nextCount = Math.min(
+        finalCount,
+        getCountForElapsedMilliseconds(activeMusic, tempo, startingCount, elapsedMilliseconds),
+      )
 
       if (playbackMode === 'production') {
         setProductionCount(nextCount)
+        musicSynth.current.sync(activeMusic, nextCount, getMillisecondsPerBeatAt(
+          activeMusic?.tempoMap ?? [{ beat: 0, bpm: tempo }],
+          nextCount,
+        ))
       } else {
         setCurrentCount(nextCount)
       }
@@ -621,7 +642,7 @@ function App() {
 
     animationFrame = requestAnimationFrame(updatePlayback)
     return () => cancelAnimationFrame(animationFrame)
-  }, [activeSet.counts, activeSet.id, isPlaying, playbackMode, tempo, totalProductionCounts])
+  }, [activeSet.counts, activeSet.id, isPlaying, music, playbackMode, tempo, totalProductionCounts])
 
   useEffect(() => {
     if (playbackMode !== 'production') {
@@ -760,6 +781,8 @@ function App() {
       return
     }
 
+    musicSynth.current.silence()
+    musicSynth.current.resumeContext()
     setSelectedPerformerIds([])
     setProductionCount(0)
     setPlaybackMode('production')
@@ -775,6 +798,7 @@ function App() {
     const finalCount = playbackMode === 'production' ? totalProductionCounts : activeSet.counts
 
     if (playbackCount < finalCount) {
+      musicSynth.current.resumeContext()
       setIsPlaying(true)
     }
   }
@@ -784,6 +808,7 @@ function App() {
       return
     }
 
+    musicSynth.current.silence()
     setIsPlaying(false)
     if (playbackMode === 'production') {
       setProductionCount(0)
@@ -793,6 +818,7 @@ function App() {
   }
 
   const stopPlayback = () => {
+    musicSynth.current.silence()
     setIsPlaying(false)
     setPlaybackMode(null)
     setCurrentCount(activeSet.counts)
@@ -827,6 +853,7 @@ function App() {
   }
 
   const resetTransientState = (snapshot: EditorSnapshot) => {
+    musicSynth.current.silence()
     setSelectedPerformerIds([])
     setPlaybackMode(null)
     setIsPlaying(false)
@@ -886,6 +913,35 @@ function App() {
     } finally {
       event.target.value = ''
     }
+  }
+
+  const importMusic = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+
+    if (!file) {
+      return
+    }
+
+    try {
+      const score = await parseMuseScoreFile(file)
+      const titledScore = score.title ? score : { ...score, title: file.name }
+      dispatchHistory({ type: 'commit', snapshot: { ...history.present, music: titledScore } })
+      setMusicError('')
+    } catch (error) {
+      setMusicError(error instanceof Error ? error.message : 'Unable to import the selected music file.')
+    } finally {
+      event.target.value = ''
+    }
+  }
+
+  const removeMusic = () => {
+    if (!music) {
+      return
+    }
+
+    musicSynth.current.silence()
+    dispatchHistory({ type: 'commit', snapshot: { ...history.present, music: null } })
+    setMusicError('')
   }
 
   return (
@@ -1009,7 +1065,7 @@ function App() {
               <div className="playback-controls" aria-label="Transition playback controls">
                 <button type="button" onClick={playTransition} disabled={!transitionStartSet || isPlaying}>Play transition</button>
                 <button type="button" onClick={playProduction} disabled={drillSets.length < 2 || isPlaying}>Play from start</button>
-                <button type="button" onClick={() => setIsPlaying(false)} disabled={!isPlaying}>Pause</button>
+                <button type="button" onClick={() => { musicSynth.current.silence(); setIsPlaying(false) }} disabled={!isPlaying}>Pause</button>
                 <button type="button" onClick={resumePlayback} disabled={!playbackMode || isPlaying}>Resume</button>
                 <button type="button" onClick={restartPlayback} disabled={!playbackMode}>Restart</button>
                 <button type="button" onClick={stopPlayback} disabled={!playbackMode}>Stop</button>
@@ -1020,6 +1076,7 @@ function App() {
                     min="40"
                     max="240"
                     value={tempo}
+                    disabled={Boolean(music)}
                     aria-label="Playback tempo"
                     onChange={(event) => setTempo(Math.min(240, Math.max(40, event.target.valueAsNumber || 40)))}
                   />
@@ -1042,6 +1099,7 @@ function App() {
               disabled={playbackMode === 'production' ? drillSets.length < 2 : !transitionStartSet}
               aria-label={playbackMode === 'production' ? 'Production count' : 'Transition count'}
               onChange={(event) => {
+                musicSynth.current.silence()
                 setIsPlaying(false)
                 if (playbackMode === 'production') {
                   setProductionCount(event.target.valueAsNumber)
@@ -1051,6 +1109,36 @@ function App() {
                 }
               }}
             />
+            <section className="music-panel" aria-label="Music">
+              <div className="music-panel__heading">Music</div>
+              {music ? (
+                <div className="music-panel__details">
+                  <span className="music-panel__title" data-testid="music-title">{music.title}</span>
+                  <output aria-label="Music position">
+                    {(() => {
+                      const position = getMeasurePositionForBeat(music.measures, playbackMode === 'production' ? productionCount : 0)
+                      return `Measure ${position.measureNumber}, beat ${position.beatInMeasure.toFixed(1)}`
+                    })()}
+                  </output>
+                  <output aria-label="Music tempo">
+                    {Math.round(getActiveTempoBpm(music, tempo, playbackMode === 'production' ? productionCount : 0))} BPM
+                  </output>
+                  <button type="button" onClick={removeMusic} disabled={isPreviewing}>Remove Music</button>
+                </div>
+              ) : (
+                <span className="music-panel__empty">No music imported</span>
+              )}
+              <button type="button" onClick={() => importMusicInput.current?.click()} disabled={isPreviewing}>Import Music</button>
+              <input
+                className="music-import"
+                ref={importMusicInput}
+                type="file"
+                accept=".mscx,.mscz"
+                aria-label="Import music file"
+                onChange={importMusic}
+              />
+              {musicError && <div className="music-panel__error" role="alert">{musicError}</div>}
+            </section>
             <div className="set-track__scroller" data-testid="set-track-scroller" ref={setTrackScroller}>
               <div className="set-track" role="list" aria-label="Drill sets">
                 {drillSets.map((drillSet, index) => (

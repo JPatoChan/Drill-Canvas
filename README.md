@@ -22,6 +22,8 @@ It is built as an editor-first tool for creating performer formations, managing 
 - JSON project export and import
 - Schema-versioned project files
 - Browser-local project storage with no backend required
+- MuseScore (.mscx / .mscz) music import with synchronized production playback
+- Basic in-browser music synthesis for imported scores
 
 ## Saving Projects
 
@@ -40,12 +42,28 @@ Exported project files can be moved between browsers or devices.
 
 DrillCanvas currently runs entirely in the browser. Project data is not sent to a backend.
 
+## Music Import
+
+Use **Import Music** to load a MuseScore `.mscx` or `.mscz` file. `.mscz` archives are decompressed in the browser; no file is uploaded anywhere.
+
+DrillCanvas parses the score's title, tempo map, time signatures, measures, notes, rests, and note durations (including ties) into a normalized music model. That normalized model — not the original MuseScore file — is what gets saved and exported with the project, so a production can be reopened and played on another browser/device without the original MuseScore file.
+
+Once a score is loaded:
+
+- Production playback (Play from start / Pause / Resume / Restart / Stop / scrubbing) drives both drill animation and a first-pass Web Audio synthesizer from one shared clock, so they stay in sync.
+- Tempo and elapsed time are derived from the score's tempo map (including tempo changes) instead of the manual BPM control.
+- The music panel shows the score title, current measure/beat, and current tempo.
+
+Use **Remove Music** to detach the score and return to manual BPM playback.
+
 ## Tech Stack
 
 - React
 - TypeScript
 - Vite
 - SVG
+- Web Audio API
+- fflate (MuseScore `.mscz` decompression)
 - Vitest
 - Testing Library
 
