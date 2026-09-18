@@ -62,6 +62,8 @@
 .tool-button { width: 100%; display: flex; align-items: center; gap: 10px; padding: 9px 8px; border: 0; border-radius: 4px; background: transparent; color: #59656b; text-align: left; font: inherit; font-size: 0.82rem; cursor: pointer; }
 .tool-button--active { background: #dfe8e8; color: #1f4241; font-weight: 650; }
 .tool-button__glyph { display: grid; place-items: center; width: 22px; height: 22px; border: 1px solid currentColor; border-radius: 3px; font-size: 0.67rem; }
+.selected-performer { display: grid; gap: 4px; margin: 18px 4px 0; padding: 10px 4px 0; border-top: 1px solid #d5dcde; color: #546267; font-size: 0.68rem; line-height: 1.3; }
+.selected-performer__label { color: #1f4241; font-size: 0.78rem; font-weight: 750; }
 
 .workspace { flex: 1; min-width: 0; display: grid; grid-template-rows: minmax(360px, 1fr) 204px; }
 .field-canvas { min-height: 0; padding: 24px; display: flex; flex-direction: column; background: #dce2e4; }
@@ -76,6 +78,7 @@
 .hash-mark { stroke: #e4e6da; stroke-width: 2; opacity: 0.85; }
 .yard-number { fill: #e9e3d2; font-family: Georgia, serif; font-size: 29px; font-weight: 700; opacity: 0.85; }
 .performer-marker { cursor: grab; touch-action: none; }
+.performer-marker--selected circle { stroke: #f7f8f7; stroke-width: 5; }
 .performer-marker circle { fill: #e6bc67; stroke: #173f3d; stroke-width: 3; }
 .performer-marker text { fill: #173f3d; font-size: 10px; font-weight: 800; }
 
@@ -95,6 +98,7 @@
   .show-name { display: none; }
   .toolbar { width: 54px; flex-basis: 54px; padding: 18px 7px; }
   .toolbar__heading, .tool-button > span:last-child { display: none; }
+  .selected-performer { display: none; }
   .tool-button { justify-content: center; padding: 10px 0; }
   .workspace { grid-template-rows: minmax(300px, 1fr) 204px; }
   .field-canvas { padding: 14px; }

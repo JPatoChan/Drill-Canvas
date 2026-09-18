@@ -33,6 +33,21 @@ describe('App', () => {
     fireEvent(performer, new MouseEvent('pointermove', { bubbles: true, clientX: 410, clientY: 160 }))
 
     expect(performer.querySelector('circle')).toHaveAttribute('cx', '618.75')
-    expect(Number(performer.querySelector('circle')?.getAttribute('cy'))).toBeCloseTo(220.83333333333334)
+    expect(Number(performer.querySelector('circle')?.getAttribute('cy'))).toBeCloseTo(221.5277777777778)
+    expect(screen.getByLabelText('Selected performer')).toHaveTextContent('T1')
+    expect(screen.getByLabelText('Selected performer')).toHaveTextContent('Side 2: 3.0 steps Outside 50 yd ln')
+    expect(screen.getByLabelText('Selected performer')).toHaveTextContent('7.0 steps In front of Back hash')
+  })
+
+  it('shows marching coordinates when T1 is selected', () => {
+    render(<App />)
+    const performer = screen.getByTestId('performer-t1')
+
+    Object.defineProperty(performer, 'setPointerCapture', { value: () => undefined })
+    fireEvent(performer, new MouseEvent('pointerdown', { bubbles: true, clientX: 0, clientY: 0 }))
+
+    expect(performer).toHaveClass('performer-marker--selected')
+    expect(screen.getByLabelText('Selected performer')).toHaveTextContent('T1')
+    expect(screen.getByLabelText('Selected performer')).toHaveTextContent('On 50 yd ln')
   })
 })

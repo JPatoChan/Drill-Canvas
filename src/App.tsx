@@ -2,7 +2,9 @@ import { useState, type PointerEvent } from 'react'
 import './App.css'
 import {
   fieldGeometry,
-  getSnappedPerformerPosition,
+  formatHorizontalCoordinate,
+  formatVerticalCoordinate,
+  getSnappedPerformerPlacement,
   getFiveYardLinePositions,
   getYardLinePositions,
   getYardNumberPositions,
@@ -15,8 +17,19 @@ const fiveYardLinePositions = getFiveYardLinePositions()
 const yardLinePositions = getYardLinePositions()
 const yardNumbers = getYardNumberPositions()
 
-function FieldCanvas() {
-  const [performerPositions, setPerformerPositions] = useState(performers)
+type FieldCanvasProps = {
+  performerPositions: readonly Performer[]
+  selectedPerformerId: string | null
+  onPerformerPositionsChange: (performers: Performer[]) => void
+  onPerformerSelect: (performerId: string) => void
+}
+
+function FieldCanvas({
+  performerPositions,
+  selectedPerformerId,
+  onPerformerPositionsChange,
+  onPerformerSelect,
+}: FieldCanvasProps) {
 
   const updatePerformerPosition = (event: PointerEvent<SVGGElement>, performerId: string) => {
     const svg = event.currentTarget.ownerSVGElement
@@ -26,19 +39,19 @@ function FieldCanvas() {
     }
 
     const bounds = svg.getBoundingClientRect()
-    const position = getSnappedPerformerPosition({
+    const position = getSnappedPerformerPlacement({
       x: ((event.clientX - bounds.left) / bounds.width) * fieldGeometry.svgWidth,
       y: ((event.clientY - bounds.top) / bounds.height) * fieldGeometry.svgHeight,
     }, performerMarkerRadiusSvg)
 
-    setPerformerPositions((currentPerformers) => currentPerformers.map((performer) =>
+    onPerformerPositionsChange(performerPositions.map((performer) =>
       performer.id === performerId ? { ...performer, ...position } : performer,
     ))
   }
 
   const handlePerformerPointerDown = (event: PointerEvent<SVGGElement>, performer: Performer) => {
+    onPerformerSelect(performer.id)
     event.currentTarget.setPointerCapture(event.pointerId)
-    updatePerformerPosition(event, performer.id)
   }
 
   return (
@@ -97,7 +110,7 @@ function FieldCanvas() {
         {performerPositions.map((performer) => (
           <g
             key={performer.id}
-            className="performer-marker"
+            className={`performer-marker${selectedPerformerId === performer.id ? ' performer-marker--selected' : ''}`}
             aria-label={`Performer ${performer.label}`}
             data-testid={`performer-${performer.id}`}
             onPointerDown={(event) => handlePerformerPointerDown(event, performer)}
@@ -118,6 +131,10 @@ function FieldCanvas() {
 }
 
 function App() {
+  const [performerPositions, setPerformerPositions] = useState(performers)
+  const [selectedPerformerId, setSelectedPerformerId] = useState<string | null>(null)
+  const selectedPerformer = performerPositions.find((performer) => performer.id === selectedPerformerId)
+
   return (
     <main className="app-shell">
       <header className="app-header">
@@ -138,10 +155,22 @@ function App() {
               <span>{item}</span>
             </button>
           ))}
+          {selectedPerformer && (
+            <section className="selected-performer" aria-label="Selected performer">
+              <span className="selected-performer__label">{selectedPerformer.label}</span>
+              <span>{formatHorizontalCoordinate(selectedPerformer.x)}</span>
+              <span>{formatVerticalCoordinate(selectedPerformer.y, selectedPerformer.verticalReferenceId)}</span>
+            </section>
+          )}
         </aside>
 
         <div className="workspace">
-          <FieldCanvas />
+          <FieldCanvas
+            performerPositions={performerPositions}
+            selectedPerformerId={selectedPerformerId}
+            onPerformerPositionsChange={setPerformerPositions}
+            onPerformerSelect={setSelectedPerformerId}
+          />
 
           <section className="timeline" aria-label="Timeline and drill sets">
             <div className="timeline__header">
