@@ -3,6 +3,7 @@ import {
   getFiveYardLinePositions,
   getYardLinePositions,
   getYardNumberPositions,
+  isOnMarchingStep,
   snapToMarchingStep,
 } from './fieldGeometry'
 
@@ -31,5 +32,6 @@ describe('fieldGeometry', () => {
     expect(fieldGeometry.marchingStepSizeSvg).toBe(6.25)
     expect(eightSteps).toBe(5 * fieldGeometry.svgUnitsPerYard)
     expect(snapToMarchingStep(107.1, fieldGeometry.firstGoalLineSvg)).toBe(106.25)
+    expect(isOnMarchingStep(106.25, fieldGeometry.firstGoalLineSvg)).toBe(true)
   })
 })

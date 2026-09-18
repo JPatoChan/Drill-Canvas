@@ -75,6 +75,8 @@
 .midfield-line { stroke: #e6bc67; stroke-width: 4; }
 .hash-mark { stroke: #e4e6da; stroke-width: 2; opacity: 0.85; }
 .yard-number { fill: #e9e3d2; font-family: Georgia, serif; font-size: 29px; font-weight: 700; opacity: 0.85; }
+.performer-marker circle { fill: #e6bc67; stroke: #173f3d; stroke-width: 3; }
+.performer-marker text { fill: #173f3d; font-size: 10px; font-weight: 800; }
 
 .timeline { padding: 17px 20px; background: #f7f8f7; border-top: 1px solid #cbd2d4; overflow: hidden; }
 .timeline__header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 13px; }

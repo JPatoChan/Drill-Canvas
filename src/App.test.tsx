@@ -9,6 +9,7 @@ describe('App', () => {
     expect(screen.getByRole('complementary', { name: 'Editor tools' })).toBeInTheDocument()
     expect(screen.getByLabelText('Marching field canvas')).toBeInTheDocument()
     expect(screen.getByRole('img', { name: 'Marching football field' })).toBeInTheDocument()
+    expect(screen.getByText('T1')).toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'Timeline and drill sets' })).toBeInTheDocument()
   })
 })

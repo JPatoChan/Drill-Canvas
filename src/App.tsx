@@ -5,6 +5,7 @@ import {
   getYardLinePositions,
   getYardNumberPositions,
 } from './domain/fieldGeometry'
+import { performers } from './domain/performers'
 
 const toolbarItems = ['Select', 'Performer', 'Path', 'Measure']
 const timelineSets = ['Set 1', 'Set 2', 'Set 3', 'Set 4']
@@ -64,6 +65,12 @@ function FieldCanvas() {
           <g key={`number-${index}`} className="yard-number">
             <text x={x} y={fieldGeometry.yardNumberPositionsSvg.top} textAnchor="middle">{value}</text>
             <text x={x} y={fieldGeometry.yardNumberPositionsSvg.bottom} textAnchor="middle" transform={`rotate(180 ${x} ${fieldGeometry.yardNumberPositionsSvg.bottom})`}>{value}</text>
+          </g>
+        ))}
+        {performers.map((performer) => (
+          <g key={performer.id} className="performer-marker" aria-label={`Performer ${performer.label}`}>
+            <circle cx={performer.x} cy={performer.y} r="12" />
+            <text x={performer.x} y={performer.y} textAnchor="middle" dominantBaseline="central">{performer.label}</text>
           </g>
         ))}
       </svg>

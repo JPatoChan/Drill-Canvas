@@ -62,3 +62,6 @@ export const getYardNumberPositions = () => [10, 20, 30, 40, 50, 40, 30, 20, 10]
 
 export const snapToMarchingStep = (svgCoordinate: number, origin = 0) =>
   origin + Math.round((svgCoordinate - origin) / fieldGeometry.marchingStepSizeSvg) * fieldGeometry.marchingStepSizeSvg
+
+export const isOnMarchingStep = (svgCoordinate: number, origin = 0) =>
+  snapToMarchingStep(svgCoordinate, origin) === svgCoordinate
