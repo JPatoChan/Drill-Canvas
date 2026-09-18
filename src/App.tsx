@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent } from 'react'
+import { useEffect, useReducer, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent } from 'react'
 import './App.css'
 import {
   fieldGeometry,
@@ -31,6 +31,7 @@ import {
   interpolatePerformerPositions,
 } from './domain/playback'
 import { applyFormationOperation, duplicateSelectedPerformers, type FormationOperation } from './domain/formations'
+import { createEditorHistory, reduceEditorHistory, type EditorSnapshot } from './domain/editorHistory'
 
 const toolbarItems = ['Select', 'Performer', 'Path', 'Measure']
 const fiveYardLinePositions = getFiveYardLinePositions()
@@ -53,7 +54,9 @@ type FieldCanvasProps = {
   editingDisabled: boolean
   performerPositions: readonly Performer[]
   selectedPerformerIds: readonly string[]
-  onPerformerPositionsChange: (performers: Performer[]) => void
+  onPerformerPositionsChange: (performers: Performer[], shouldCommit?: boolean) => void
+  onPerformerDragStart: () => void
+  onPerformerDragEnd: (moved: boolean) => void
   onPerformerSelect: (performerId: string, shouldToggle: boolean) => void
   onBoxSelect: (performerIds: string[], shouldToggle: boolean) => void
   onSelectionClear: () => void
@@ -65,6 +68,8 @@ function FieldCanvas({
   performerPositions,
   selectedPerformerIds,
   onPerformerPositionsChange,
+  onPerformerDragStart,
+  onPerformerDragEnd,
   onPerformerSelect,
   onBoxSelect,
   onSelectionClear,
@@ -103,7 +108,7 @@ function FieldCanvas({
       selectedPerformerIds,
       performerId,
       rawPosition,
-    ))
+    ), false)
   }
 
   const getSvgPoint = (event: Pick<PointerEvent<SVGSVGElement>, 'clientX' | 'clientY' | 'currentTarget'>) => {
@@ -135,15 +140,18 @@ function FieldCanvas({
       moved: false,
       collapseSelectionOnRelease: !event.shiftKey && isSelected && selectedPerformerIds.length > 1,
     }
+    onPerformerDragStart()
     event.currentTarget.setPointerCapture(event.pointerId)
   }
 
   const handlePerformerPointerUp = (event: PointerEvent<SVGGElement>) => {
+    const moved = dragState.current?.moved ?? false
     if (dragState.current?.collapseSelectionOnRelease && !dragState.current.moved) {
       onPerformerSelect(dragState.current.performerId, false)
     }
 
     dragState.current = null
+    onPerformerDragEnd(moved)
     event.currentTarget.releasePointerCapture(event.pointerId)
   }
 
@@ -323,6 +331,7 @@ function FieldCanvas({
             }}
             onPointerUp={handlePerformerPointerUp}
             onPointerCancel={() => {
+              onPerformerDragEnd(dragState.current?.moved ?? false)
               dragState.current = null
             }}
           >
@@ -338,6 +347,7 @@ function FieldCanvas({
 }
 
 type PerformerInventoryProps = {
+  editingDisabled: boolean
   performerPositions: readonly Performer[]
   selectedPerformerIds: readonly string[]
   onPerformerSelect: (performerId: string, shouldToggle: boolean) => void
@@ -345,6 +355,7 @@ type PerformerInventoryProps = {
 }
 
 function PerformerInventory({
+  editingDisabled,
   performerPositions,
   selectedPerformerIds,
   onPerformerSelect,
@@ -380,6 +391,7 @@ function PerformerInventory({
               <input
                 className="inventory-row__label"
                 aria-label={`Label for ${performer.label}`}
+                disabled={editingDisabled}
                 value={performer.label}
                 onChange={(event) => onPerformerChange(performer.id, {
                   label: event.target.value,
@@ -392,6 +404,7 @@ function PerformerInventory({
               <span>Name</span>
               <input
                 aria-label={`Name for ${performer.label}`}
+                disabled={editingDisabled}
                 value={performer.name ?? ''}
                 placeholder="Name"
                 onChange={(event) => onPerformerChange(performer.id, {
@@ -405,6 +418,7 @@ function PerformerInventory({
               <span>Section</span>
               <input
                 aria-label={`Section for ${performer.label}`}
+                disabled={editingDisabled}
                 value={performer.section ?? ''}
                 placeholder="Section"
                 onChange={(event) => onPerformerChange(performer.id, {
@@ -422,9 +436,14 @@ function PerformerInventory({
 }
 
 function App() {
-  const [performerMetadata, setPerformerMetadata] = useState(() => performers.map(getPerformerMetadata))
-  const [drillSets, setDrillSets] = useState<DrillSet[]>([initialDrillSet])
-  const [activeSetId, setActiveSetId] = useState(initialDrillSet.id)
+  const [history, dispatchHistory] = useReducer(reduceEditorHistory, {
+    performerMetadata: performers.map(getPerformerMetadata),
+    drillSets: [initialDrillSet],
+    activeSetId: initialDrillSet.id,
+  }, createEditorHistory)
+  const dragStartSnapshot = useRef<EditorSnapshot | null>(null)
+  const setTrackScroller = useRef<HTMLDivElement>(null)
+  const { performerMetadata, drillSets, activeSetId } = history.present
   const [selectedPerformerIds, setSelectedPerformerIds] = useState<string[]>([])
   const [mode, setMode] = useState<'select' | 'performer'>('select')
   const [playbackMode, setPlaybackMode] = useState<PlaybackMode>(null)
@@ -486,21 +505,51 @@ function App() {
         return
       }
 
-      setPerformerMetadata((currentMetadata) =>
-        currentMetadata.filter((performer) => !selectedPerformerIds.includes(performer.id)),
-      )
-      setDrillSets((currentSets) => currentSets.map((drillSet) => ({
-        ...drillSet,
-        performerPositions: drillSet.performerPositions.filter(
-          ({ performerId }) => !selectedPerformerIds.includes(performerId),
-        ),
-      })))
+      dispatchHistory({
+        type: 'commit',
+        snapshot: {
+          ...history.present,
+          performerMetadata: performerMetadata.filter(
+            (performer) => !selectedPerformerIds.includes(performer.id),
+          ),
+          drillSets: drillSets.map((drillSet) => ({
+            ...drillSet,
+            performerPositions: drillSet.performerPositions.filter(
+              ({ performerId }) => !selectedPerformerIds.includes(performerId),
+            ),
+          })),
+        },
+      })
       setSelectedPerformerIds([])
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isPreviewing, selectedPerformerIds])
+  }, [drillSets, history.present, isPreviewing, performerMetadata, selectedPerformerIds])
+
+  useEffect(() => {
+    const handleHistoryShortcut = (event: KeyboardEvent) => {
+      const target = event.target
+      const isEditableTarget = target instanceof Element && (
+        target.matches('input, textarea, select') || target.closest('[contenteditable="true"]') !== null
+      )
+      const isUndo = (event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === 'z'
+      const isRedo = (event.ctrlKey || event.metaKey) && (
+        (event.shiftKey && event.key.toLowerCase() === 'z') || event.key.toLowerCase() === 'y'
+      )
+
+      if (isEditableTarget || isPreviewing || (!isUndo && !isRedo)) {
+        return
+      }
+
+      event.preventDefault()
+      dispatchHistory({ type: isUndo ? 'undo' : 'redo' })
+      setSelectedPerformerIds([])
+    }
+
+    window.addEventListener('keydown', handleHistoryShortcut)
+    return () => window.removeEventListener('keydown', handleHistoryShortcut)
+  }, [isPreviewing])
 
   useEffect(() => {
     if (!isPlaying || !playbackMode) {
@@ -533,6 +582,20 @@ function App() {
     return () => cancelAnimationFrame(animationFrame)
   }, [activeSet.counts, activeSet.id, isPlaying, playbackMode, tempo, totalProductionCounts])
 
+  useEffect(() => {
+    if (playbackMode !== 'production') {
+      setCurrentCount((count) => Math.min(count, activeSet.counts))
+    }
+  }, [activeSet.counts, activeSet.id, playbackMode])
+
+  useEffect(() => {
+    const activeCard = setTrackScroller.current?.querySelector<HTMLElement>(
+      `[data-set-id="${activeSetId}"]`,
+    )
+
+    activeCard?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+  }, [activeSetId, drillSets.length])
+
   const selectPerformer = (performerId: string, shouldToggle: boolean) => {
     setSelectedPerformerIds((currentIds) => {
       if (!shouldToggle) {
@@ -561,39 +624,48 @@ function App() {
     performerId: string,
     changes: Pick<Performer, 'label' | 'name' | 'section'>,
   ) => {
-    setPerformerMetadata((currentPerformers) => currentPerformers.map((performer) =>
-      performer.id === performerId ? { ...performer, ...changes } : performer,
-    ))
+    dispatchHistory({
+      type: 'commit',
+      snapshot: {
+        ...history.present,
+        performerMetadata: performerMetadata.map((performer) =>
+          performer.id === performerId ? { ...performer, ...changes } : performer,
+        ),
+      },
+    })
   }
 
-  const updateActivePerformerPositions = (nextPerformers: Performer[]) => {
-    setDrillSets((currentSets) => {
-      const existingIds = new Set(currentSets.flatMap((drillSet) =>
-        drillSet.performerPositions.map(({ performerId }) => performerId),
-      ))
-      const newPerformers = nextPerformers.filter(({ id }) => !existingIds.has(id))
+  const updateActivePerformerPositions = (nextPerformers: Performer[], shouldCommit = true) => {
+    const existingIds = new Set(drillSets.flatMap((drillSet) =>
+      drillSet.performerPositions.map(({ performerId }) => performerId),
+    ))
+    const newPerformers = nextPerformers.filter(({ id }) => !existingIds.has(id))
+    const metadataIds = new Set(performerMetadata.map(({ id }) => id))
+    const additions = nextPerformers.filter(({ id }) => !metadataIds.has(id)).map(getPerformerMetadata)
 
-      // A new production performer starts at the creation position in every existing set.
-      return currentSets.map((drillSet) => ({
-        ...drillSet,
-        performerPositions: drillSet.id === activeSetId
-          ? nextPerformers.map(getPerformerPosition)
-          : [...drillSet.performerPositions, ...newPerformers.map(getPerformerPosition)],
-      }))
-    })
-    setPerformerMetadata((currentMetadata) => {
-      const existingIds = new Set(currentMetadata.map(({ id }) => id))
-      const additions = nextPerformers.filter(({ id }) => !existingIds.has(id)).map(getPerformerMetadata)
-
-      return additions.length > 0 ? [...currentMetadata, ...additions] : currentMetadata
+    dispatchHistory({
+      type: shouldCommit ? 'commit' : 'replace',
+      snapshot: {
+        ...history.present,
+        performerMetadata: additions.length > 0 ? [...performerMetadata, ...additions] : performerMetadata,
+        // A new production performer starts at the creation position in every existing set.
+        drillSets: drillSets.map((drillSet) => ({
+          ...drillSet,
+          performerPositions: drillSet.id === activeSetId
+            ? nextPerformers.map(getPerformerPosition)
+            : [...drillSet.performerPositions, ...newPerformers.map(getPerformerPosition)],
+        })),
+      },
     })
   }
 
   const addDrillSet = () => {
     const newSet = createNextDrillSet(drillSets, activeSet)
 
-    setDrillSets((currentSets) => [...currentSets, newSet])
-    setActiveSetId(newSet.id)
+    dispatchHistory({
+      type: 'commit',
+      snapshot: { ...history.present, drillSets: [...drillSets, newSet], activeSetId: newSet.id },
+    })
     setSelectedPerformerIds([])
     setIsPlaying(false)
     setPlaybackMode(null)
@@ -603,7 +675,7 @@ function App() {
   const activateDrillSet = (drillSetId: string) => {
     const nextSet = drillSets.find(({ id }) => id === drillSetId)
 
-    setActiveSetId(drillSetId)
+    dispatchHistory({ type: 'replace', snapshot: { ...history.present, activeSetId: drillSetId } })
     setSelectedPerformerIds([])
     setIsPlaying(false)
     setPlaybackMode(null)
@@ -617,11 +689,15 @@ function App() {
 
     const nextCounts = Math.max(1, Math.floor(counts))
 
-    setDrillSets((currentSets) => currentSets.map((drillSet, index) =>
-      drillSet.id === drillSetId && index > 0
-        ? { ...drillSet, counts: nextCounts }
-        : drillSet,
-    ))
+    dispatchHistory({
+      type: 'commit',
+      snapshot: {
+        ...history.present,
+        drillSets: drillSets.map((drillSet, index) => drillSet.id === drillSetId && index > 0
+          ? { ...drillSet, counts: nextCounts }
+          : drillSet),
+      },
+    })
     if (drillSetId === activeSetId) {
       setCurrentCount((count) => count >= activeSet.counts ? nextCounts : Math.min(count, nextCounts))
     }
@@ -681,6 +757,15 @@ function App() {
     setCurrentCount(activeSet.counts)
   }
 
+  const navigateHistory = (type: 'undo' | 'redo') => {
+    if (isPreviewing) {
+      return
+    }
+
+    dispatchHistory({ type })
+    setSelectedPerformerIds([])
+  }
+
   const applyFormation = (operation: FormationOperation) => {
     if (isPreviewing || selectedPerformerIds.length < 2) {
       return
@@ -708,7 +793,11 @@ function App() {
           <span>DrillCanvas</span>
         </div>
         <div className="show-name">Untitled Production</div>
-        <button className="header-action" type="button">Share</button>
+        <div className="header-actions">
+          <button type="button" onClick={() => navigateHistory('undo')} disabled={history.past.length === 0 || isPreviewing}>Undo</button>
+          <button type="button" onClick={() => navigateHistory('redo')} disabled={history.future.length === 0 || isPreviewing}>Redo</button>
+          <button className="header-action" type="button">Share</button>
+        </div>
       </header>
 
       <div className="editor-layout">
@@ -764,6 +853,15 @@ function App() {
             performerPositions={playbackPositions}
             selectedPerformerIds={selectedPerformerIds}
             onPerformerPositionsChange={updateActivePerformerPositions}
+            onPerformerDragStart={() => {
+              dragStartSnapshot.current = history.present
+            }}
+            onPerformerDragEnd={(moved) => {
+              if (moved && dragStartSnapshot.current) {
+                dispatchHistory({ type: 'checkpoint', snapshot: dragStartSnapshot.current })
+              }
+              dragStartSnapshot.current = null
+            }}
             onPerformerSelect={selectPerformer}
             onBoxSelect={selectPerformersInBox}
             onSelectionClear={() => setSelectedPerformerIds([])}
@@ -820,44 +918,48 @@ function App() {
                 }
               }}
             />
-            <div className="set-track" role="list" aria-label="Drill sets">
-              {drillSets.map((drillSet, index) => (
-                <div
-                  className={`set-card${drillSet.id === activeSetId ? ' set-card--active' : ''}${playbackMode === 'production' && index === playbackSetIndex ? ' set-card--playback' : ''}`}
-                  role="listitem"
-                  key={drillSet.id}
-                  data-testid={`drill-set-${drillSet.id}`}
-                >
-                  <button
-                    className="set-card__select"
-                    type="button"
-                    aria-pressed={drillSet.id === activeSetId}
-                    onClick={() => activateDrillSet(drillSet.id)}
+            <div className="set-track__scroller" data-testid="set-track-scroller" ref={setTrackScroller}>
+              <div className="set-track" role="list" aria-label="Drill sets">
+                {drillSets.map((drillSet, index) => (
+                  <div
+                    className={`set-card${drillSet.id === activeSetId ? ' set-card--active' : ''}${playbackMode === 'production' && index === playbackSetIndex ? ' set-card--playback' : ''}`}
+                    role="listitem"
+                    key={drillSet.id}
+                    data-testid={`drill-set-${drillSet.id}`}
+                    data-set-id={drillSet.id}
                   >
-                    <span>{drillSet.name}</span>
-                  </button>
-                  {index === 0 ? (
-                    <small>0 counts</small>
-                  ) : (
-                    <label className="set-card__counts">
-                      <input
-                        type="number"
-                        min="1"
-                        value={drillSet.counts}
-                        aria-label={`Counts for ${drillSet.name}`}
-                        disabled={isPreviewing}
-                        onChange={(event) => updateDrillSetCounts(drillSet.id, event.target.valueAsNumber)}
-                      />
-                      <span>counts</span>
-                    </label>
-                  )}
-                </div>
-              ))}
+                    <button
+                      className="set-card__select"
+                      type="button"
+                      aria-pressed={drillSet.id === activeSetId}
+                      onClick={() => activateDrillSet(drillSet.id)}
+                    >
+                      <span>{drillSet.name}</span>
+                    </button>
+                    {index === 0 ? (
+                      <small>0 counts</small>
+                    ) : (
+                      <label className="set-card__counts">
+                        <input
+                          type="number"
+                          min="1"
+                          value={drillSet.counts}
+                          aria-label={`Counts for ${drillSet.name}`}
+                          disabled={isPreviewing}
+                          onChange={(event) => updateDrillSetCounts(drillSet.id, event.target.valueAsNumber)}
+                        />
+                        <span>counts</span>
+                      </label>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           </section>
         </div>
 
         <PerformerInventory
+          editingDisabled={isPreviewing}
           performerPositions={performerPositions}
           selectedPerformerIds={selectedPerformerIds}
           onPerformerSelect={selectPerformer}
