@@ -1,11 +1,13 @@
+import { useState, type PointerEvent } from 'react'
 import './App.css'
 import {
   fieldGeometry,
+  getSnappedPerformerPosition,
   getFiveYardLinePositions,
   getYardLinePositions,
   getYardNumberPositions,
 } from './domain/fieldGeometry'
-import { performers } from './domain/performers'
+import { performerMarkerRadiusSvg, performers, type Performer } from './domain/performers'
 
 const toolbarItems = ['Select', 'Performer', 'Path', 'Measure']
 const timelineSets = ['Set 1', 'Set 2', 'Set 3', 'Set 4']
@@ -14,6 +16,31 @@ const yardLinePositions = getYardLinePositions()
 const yardNumbers = getYardNumberPositions()
 
 function FieldCanvas() {
+  const [performerPositions, setPerformerPositions] = useState(performers)
+
+  const updatePerformerPosition = (event: PointerEvent<SVGGElement>, performerId: string) => {
+    const svg = event.currentTarget.ownerSVGElement
+
+    if (!svg) {
+      return
+    }
+
+    const bounds = svg.getBoundingClientRect()
+    const position = getSnappedPerformerPosition({
+      x: ((event.clientX - bounds.left) / bounds.width) * fieldGeometry.svgWidth,
+      y: ((event.clientY - bounds.top) / bounds.height) * fieldGeometry.svgHeight,
+    }, performerMarkerRadiusSvg)
+
+    setPerformerPositions((currentPerformers) => currentPerformers.map((performer) =>
+      performer.id === performerId ? { ...performer, ...position } : performer,
+    ))
+  }
+
+  const handlePerformerPointerDown = (event: PointerEvent<SVGGElement>, performer: Performer) => {
+    event.currentTarget.setPointerCapture(event.pointerId)
+    updatePerformerPosition(event, performer.id)
+  }
+
   return (
     <section className="field-canvas" aria-label="Marching field canvas">
       <div className="field-canvas__header">
@@ -67,9 +94,21 @@ function FieldCanvas() {
             <text x={x} y={fieldGeometry.yardNumberPositionsSvg.bottom} textAnchor="middle" transform={`rotate(180 ${x} ${fieldGeometry.yardNumberPositionsSvg.bottom})`}>{value}</text>
           </g>
         ))}
-        {performers.map((performer) => (
-          <g key={performer.id} className="performer-marker" aria-label={`Performer ${performer.label}`}>
-            <circle cx={performer.x} cy={performer.y} r="12" />
+        {performerPositions.map((performer) => (
+          <g
+            key={performer.id}
+            className="performer-marker"
+            aria-label={`Performer ${performer.label}`}
+            data-testid={`performer-${performer.id}`}
+            onPointerDown={(event) => handlePerformerPointerDown(event, performer)}
+            onPointerMove={(event) => {
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                updatePerformerPosition(event, performer.id)
+              }
+            }}
+            onPointerUp={(event) => event.currentTarget.releasePointerCapture(event.pointerId)}
+          >
+            <circle cx={performer.x} cy={performer.y} r={performerMarkerRadiusSvg} />
             <text x={performer.x} y={performer.y} textAnchor="middle" dominantBaseline="central">{performer.label}</text>
           </g>
         ))}

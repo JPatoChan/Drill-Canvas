@@ -7,6 +7,8 @@ export type Performer = {
   y: number
 }
 
+export const performerMarkerRadiusSvg = 12
+
 export const performers: readonly Performer[] = [
   {
     id: 't1',

@@ -65,3 +65,47 @@ export const snapToMarchingStep = (svgCoordinate: number, origin = 0) =>
 
 export const isOnMarchingStep = (svgCoordinate: number, origin = 0) =>
   snapToMarchingStep(svgCoordinate, origin) === svgCoordinate
+
+type Point = {
+  x: number
+  y: number
+}
+
+const clamp = (value: number, minimum: number, maximum: number) =>
+  Math.min(Math.max(value, minimum), maximum)
+
+const getClosestAnchoredStep = (
+  coordinate: number,
+  anchors: readonly number[],
+  minimum: number,
+  maximum: number,
+) => anchors
+  .map((anchor) => {
+    const minimumStep = Math.ceil((minimum - anchor) / fieldGeometry.marchingStepSizeSvg)
+    const maximumStep = Math.floor((maximum - anchor) / fieldGeometry.marchingStepSizeSvg)
+    const step = clamp(
+      Math.round((coordinate - anchor) / fieldGeometry.marchingStepSizeSvg),
+      minimumStep,
+      maximumStep,
+    )
+
+    return anchor + step * fieldGeometry.marchingStepSizeSvg
+  })
+  .reduce((closest, candidate) =>
+    Math.abs(candidate - coordinate) < Math.abs(closest - coordinate) ? candidate : closest,
+  )
+
+export const getSnappedPerformerPosition = (position: Point, markerRadius: number): Point => ({
+  x: getClosestAnchoredStep(
+    position.x,
+    [fieldGeometry.firstGoalLineSvg],
+    markerRadius,
+    fieldGeometry.svgWidth - markerRadius,
+  ),
+  y: getClosestAnchoredStep(
+    position.y,
+    [0, ...fieldGeometry.highSchoolHashPositionsSvg, fieldGeometry.svgHeight],
+    markerRadius,
+    fieldGeometry.svgHeight - markerRadius,
+  ),
+})

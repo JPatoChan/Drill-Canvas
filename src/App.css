@@ -75,6 +75,7 @@
 .midfield-line { stroke: #e6bc67; stroke-width: 4; }
 .hash-mark { stroke: #e4e6da; stroke-width: 2; opacity: 0.85; }
 .yard-number { fill: #e9e3d2; font-family: Georgia, serif; font-size: 29px; font-weight: 700; opacity: 0.85; }
+.performer-marker { cursor: grab; touch-action: none; }
 .performer-marker circle { fill: #e6bc67; stroke: #173f3d; stroke-width: 3; }
 .performer-marker text { fill: #173f3d; font-size: 10px; font-weight: 800; }
 

@@ -1,6 +1,7 @@
 import {
   fieldGeometry,
   getFiveYardLinePositions,
+  getSnappedPerformerPosition,
   getYardLinePositions,
   getYardNumberPositions,
   isOnMarchingStep,
@@ -33,5 +34,26 @@ describe('fieldGeometry', () => {
     expect(eightSteps).toBe(5 * fieldGeometry.svgUnitsPerYard)
     expect(snapToMarchingStep(107.1, fieldGeometry.firstGoalLineSvg)).toBe(106.25)
     expect(isOnMarchingStep(106.25, fieldGeometry.firstGoalLineSvg)).toBe(true)
+  })
+
+  it('snaps horizontal placement from the first goal line', () => {
+    expect(getSnappedPerformerPosition({ x: 166.4, y: 100 }, 12).x).toBe(168.75)
+  })
+
+  it('snaps vertical placement to high-school hashes and their marching-step offsets', () => {
+    const [frontHash, backHash] = fieldGeometry.highSchoolHashPositionsSvg
+
+    expect(getSnappedPerformerPosition({ x: 600, y: frontHash + 1 }, 12).y).toBe(frontHash)
+    expect(getSnappedPerformerPosition({ x: 600, y: backHash - 1 }, 12).y).toBe(backHash)
+    expect(getSnappedPerformerPosition({ x: 600, y: frontHash - 19 }, 12).y).toBe(frontHash - 18.75)
+    expect(getSnappedPerformerPosition({ x: 600, y: backHash + 12 }, 12).y).toBe(backHash + 12.5)
+  })
+
+  it('clamps performer positions inside the field marker boundary', () => {
+    expect(getSnappedPerformerPosition({ x: -100, y: -100 }, 12)).toEqual({ x: 12.5, y: 12.5 })
+    expect(getSnappedPerformerPosition({ x: 2000, y: 2000 }, 12)).toEqual({
+      x: 1187.5,
+      y: fieldGeometry.svgHeight - 12.5,
+    })
   })
 })
