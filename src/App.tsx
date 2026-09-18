@@ -1,4 +1,4 @@
-import { useState, type PointerEvent } from 'react'
+import { useEffect, useRef, useState, type PointerEvent } from 'react'
 import './App.css'
 import {
   fieldGeometry,
@@ -9,7 +9,13 @@ import {
   getYardLinePositions,
   getYardNumberPositions,
 } from './domain/fieldGeometry'
-import { performerMarkerRadiusSvg, performers, type Performer } from './domain/performers'
+import {
+  createPerformer,
+  moveSelectedPerformers,
+  performerMarkerRadiusSvg,
+  performers,
+  type Performer,
+} from './domain/performers'
 
 const toolbarItems = ['Select', 'Performer', 'Path', 'Measure']
 const timelineSets = ['Set 1', 'Set 2', 'Set 3', 'Set 4']
@@ -18,18 +24,27 @@ const yardLinePositions = getYardLinePositions()
 const yardNumbers = getYardNumberPositions()
 
 type FieldCanvasProps = {
+  mode: 'select' | 'performer'
   performerPositions: readonly Performer[]
-  selectedPerformerId: string | null
+  selectedPerformerIds: readonly string[]
   onPerformerPositionsChange: (performers: Performer[]) => void
-  onPerformerSelect: (performerId: string) => void
+  onPerformerSelect: (performerId: string, shouldToggle: boolean) => void
+  onSelectionClear: () => void
 }
 
 function FieldCanvas({
+  mode,
   performerPositions,
-  selectedPerformerId,
+  selectedPerformerIds,
   onPerformerPositionsChange,
   onPerformerSelect,
+  onSelectionClear,
 }: FieldCanvasProps) {
+  const dragState = useRef<{
+    performerId: string
+    moved: boolean
+    collapseSelectionOnRelease: boolean
+  } | null>(null)
 
   const updatePerformerPosition = (event: PointerEvent<SVGGElement>, performerId: string) => {
     const svg = event.currentTarget.ownerSVGElement
@@ -39,19 +54,65 @@ function FieldCanvas({
     }
 
     const bounds = svg.getBoundingClientRect()
-    const position = getSnappedPerformerPlacement({
+    const rawPosition = {
       x: ((event.clientX - bounds.left) / bounds.width) * fieldGeometry.svgWidth,
       y: ((event.clientY - bounds.top) / bounds.height) * fieldGeometry.svgHeight,
-    }, performerMarkerRadiusSvg)
+    }
 
-    onPerformerPositionsChange(performerPositions.map((performer) =>
-      performer.id === performerId ? { ...performer, ...position } : performer,
+    onPerformerPositionsChange(moveSelectedPerformers(
+      performerPositions,
+      selectedPerformerIds,
+      performerId,
+      rawPosition,
     ))
   }
 
   const handlePerformerPointerDown = (event: PointerEvent<SVGGElement>, performer: Performer) => {
-    onPerformerSelect(performer.id)
+    event.stopPropagation()
+    const isSelected = selectedPerformerIds.includes(performer.id)
+
+    if (event.shiftKey) {
+      onPerformerSelect(performer.id, true)
+    } else if (!isSelected) {
+      onPerformerSelect(performer.id, false)
+    }
+
+    dragState.current = {
+      performerId: performer.id,
+      moved: false,
+      collapseSelectionOnRelease: !event.shiftKey && isSelected && selectedPerformerIds.length > 1,
+    }
     event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  const handlePerformerPointerUp = (event: PointerEvent<SVGGElement>) => {
+    if (dragState.current?.collapseSelectionOnRelease && !dragState.current.moved) {
+      onPerformerSelect(dragState.current.performerId, false)
+    }
+
+    dragState.current = null
+    event.currentTarget.releasePointerCapture(event.pointerId)
+  }
+
+  const handleFieldPointerDown = (event: PointerEvent<SVGSVGElement>) => {
+    if (mode === 'select') {
+      onSelectionClear()
+      return
+    }
+
+    if (mode !== 'performer') {
+      return
+    }
+
+    const bounds = event.currentTarget.getBoundingClientRect()
+    const placement = getSnappedPerformerPlacement({
+      x: ((event.clientX - bounds.left) / bounds.width) * fieldGeometry.svgWidth,
+      y: ((event.clientY - bounds.top) / bounds.height) * fieldGeometry.svgHeight,
+    }, performerMarkerRadiusSvg)
+    const performer = createPerformer(placement, performerPositions)
+
+    onPerformerPositionsChange([...performerPositions, performer])
+    onPerformerSelect(performer.id, false)
   }
 
   return (
@@ -65,6 +126,8 @@ function FieldCanvas({
         viewBox={`0 0 ${fieldGeometry.svgWidth} ${fieldGeometry.svgHeight}`}
         role="img"
         aria-label="Marching football field"
+        data-testid="field-svg"
+        onPointerDown={handleFieldPointerDown}
       >
         <title>120-yard marching band football field</title>
         <rect className="field" width={fieldGeometry.svgWidth} height={fieldGeometry.svgHeight} />
@@ -110,16 +173,22 @@ function FieldCanvas({
         {performerPositions.map((performer) => (
           <g
             key={performer.id}
-            className={`performer-marker${selectedPerformerId === performer.id ? ' performer-marker--selected' : ''}`}
+            className={`performer-marker${selectedPerformerIds.includes(performer.id) ? ' performer-marker--selected' : ''}`}
             aria-label={`Performer ${performer.label}`}
             data-testid={`performer-${performer.id}`}
             onPointerDown={(event) => handlePerformerPointerDown(event, performer)}
             onPointerMove={(event) => {
               if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                if (dragState.current) {
+                  dragState.current.moved = true
+                }
                 updatePerformerPosition(event, performer.id)
               }
             }}
-            onPointerUp={(event) => event.currentTarget.releasePointerCapture(event.pointerId)}
+            onPointerUp={handlePerformerPointerUp}
+            onPointerCancel={() => {
+              dragState.current = null
+            }}
           >
             <circle cx={performer.x} cy={performer.y} r={performerMarkerRadiusSvg} />
             <text x={performer.x} y={performer.y} textAnchor="middle" dominantBaseline="central">{performer.label}</text>
@@ -132,8 +201,48 @@ function FieldCanvas({
 
 function App() {
   const [performerPositions, setPerformerPositions] = useState(performers)
-  const [selectedPerformerId, setSelectedPerformerId] = useState<string | null>(null)
-  const selectedPerformer = performerPositions.find((performer) => performer.id === selectedPerformerId)
+  const [selectedPerformerIds, setSelectedPerformerIds] = useState<string[]>([])
+  const [mode, setMode] = useState<'select' | 'performer'>('select')
+  const selectedPerformer = selectedPerformerIds.length === 1
+    ? performerPositions.find((performer) => performer.id === selectedPerformerIds[0])
+    : undefined
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target
+      const isEditableTarget = target instanceof Element && (
+        target.matches('input, textarea, select') || target.closest('[contenteditable="true"]') !== null
+      )
+
+      if (
+        (event.key !== 'Backspace' && event.key !== 'Delete')
+        || selectedPerformerIds.length === 0
+        || isEditableTarget
+      ) {
+        return
+      }
+
+      setPerformerPositions((currentPerformers) =>
+        currentPerformers.filter((performer) => !selectedPerformerIds.includes(performer.id)),
+      )
+      setSelectedPerformerIds([])
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [selectedPerformerIds])
+
+  const selectPerformer = (performerId: string, shouldToggle: boolean) => {
+    setSelectedPerformerIds((currentIds) => {
+      if (!shouldToggle) {
+        return [performerId]
+      }
+
+      return currentIds.includes(performerId)
+        ? currentIds.filter((id) => id !== performerId)
+        : [...currentIds, performerId]
+    })
+  }
 
   return (
     <main className="app-shell">
@@ -150,7 +259,19 @@ function App() {
         <aside className="toolbar" aria-label="Editor tools">
           <div className="toolbar__heading">Tools</div>
           {toolbarItems.map((item, index) => (
-            <button className={`tool-button${index === 0 ? ' tool-button--active' : ''}`} type="button" key={item}>
+            <button
+              className={`tool-button${(item === 'Select' && mode === 'select') || (item === 'Performer' && mode === 'performer') ? ' tool-button--active' : ''}`}
+              type="button"
+              key={item}
+              onClick={() => {
+                if (item === 'Select') {
+                  setMode('select')
+                }
+                if (item === 'Performer') {
+                  setMode('performer')
+                }
+              }}
+            >
               <span className="tool-button__glyph" aria-hidden="true">{index + 1}</span>
               <span>{item}</span>
             </button>
@@ -162,14 +283,21 @@ function App() {
               <span>{formatVerticalCoordinate(selectedPerformer.y, selectedPerformer.verticalReferenceId)}</span>
             </section>
           )}
+          {selectedPerformerIds.length > 1 && (
+            <div className="selected-performer" aria-label="Selected performers">
+              <span className="selected-performer__label">{selectedPerformerIds.length} performers selected</span>
+            </div>
+          )}
         </aside>
 
         <div className="workspace">
           <FieldCanvas
+            mode={mode}
             performerPositions={performerPositions}
-            selectedPerformerId={selectedPerformerId}
+            selectedPerformerIds={selectedPerformerIds}
             onPerformerPositionsChange={setPerformerPositions}
-            onPerformerSelect={setSelectedPerformerId}
+            onPerformerSelect={selectPerformer}
+            onSelectionClear={() => setSelectedPerformerIds([])}
           />
 
           <section className="timeline" aria-label="Timeline and drill sets">

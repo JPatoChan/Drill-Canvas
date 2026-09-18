@@ -84,6 +84,11 @@ export const snapToMarchingStep = (svgCoordinate: number, origin = 0) =>
 export const isOnMarchingStep = (svgCoordinate: number, origin = 0) =>
   snapToMarchingStep(svgCoordinate, origin) === svgCoordinate
 
+export const getNearestVerticalReferenceId = (y: number): VerticalReferenceId =>
+  verticalReferenceLines.reduce((nearest, candidate) =>
+    Math.abs(candidate.position - y) < Math.abs(nearest.position - y) ? candidate : nearest,
+  ).id
+
 type Point = {
   x: number
   y: number
@@ -120,9 +125,8 @@ export const getSnappedPerformerPosition = (position: Point, markerRadius: numbe
 }
 
 export const getSnappedPerformerPlacement = (position: Point, markerRadius: number) => {
-  const verticalReference = verticalReferenceLines.reduce((nearest, candidate) =>
-    Math.abs(candidate.position - position.y) < Math.abs(nearest.position - position.y) ? candidate : nearest,
-  )
+  const verticalReferenceId = getNearestVerticalReferenceId(position.y)
+  const verticalReference = verticalReferenceLines.find(({ id }) => id === verticalReferenceId) ?? verticalReferenceLines[0]
 
   return {
     x: getClosestAnchoredStep(
@@ -137,7 +141,7 @@ export const getSnappedPerformerPlacement = (position: Point, markerRadius: numb
     markerRadius,
     fieldGeometry.svgHeight - markerRadius,
     ),
-    verticalReferenceId: verticalReference.id,
+    verticalReferenceId,
   }
 }
 
