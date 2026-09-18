@@ -30,6 +30,7 @@ import {
   getTotalProductionCounts,
   interpolatePerformerPositions,
 } from './domain/playback'
+import { applyFormationOperation, duplicateSelectedPerformers, type FormationOperation } from './domain/formations'
 
 const toolbarItems = ['Select', 'Performer', 'Path', 'Measure']
 const fiveYardLinePositions = getFiveYardLinePositions()
@@ -54,6 +55,7 @@ type FieldCanvasProps = {
   selectedPerformerIds: readonly string[]
   onPerformerPositionsChange: (performers: Performer[]) => void
   onPerformerSelect: (performerId: string, shouldToggle: boolean) => void
+  onBoxSelect: (performerIds: string[], shouldToggle: boolean) => void
   onSelectionClear: () => void
 }
 
@@ -64,9 +66,19 @@ function FieldCanvas({
   selectedPerformerIds,
   onPerformerPositionsChange,
   onPerformerSelect,
+  onBoxSelect,
   onSelectionClear,
 }: FieldCanvasProps) {
   const [zoom, setZoom] = useState(1)
+  const [marquee, setMarquee] = useState<{
+    startX: number
+    startY: number
+    currentX: number
+    currentY: number
+    pointerId: number
+    shouldToggle: boolean
+    moved: boolean
+  } | null>(null)
   const dragState = useRef<{
     performerId: string
     moved: boolean
@@ -92,6 +104,15 @@ function FieldCanvas({
       performerId,
       rawPosition,
     ))
+  }
+
+  const getSvgPoint = (event: Pick<PointerEvent<SVGSVGElement>, 'clientX' | 'clientY' | 'currentTarget'>) => {
+    const bounds = event.currentTarget.getBoundingClientRect()
+
+    return {
+      x: ((event.clientX - bounds.left) / bounds.width) * fieldGeometry.svgWidth,
+      y: ((event.clientY - bounds.top) / bounds.height) * fieldGeometry.svgHeight,
+    }
   }
 
   const handlePerformerPointerDown = (event: PointerEvent<SVGGElement>, performer: Performer) => {
@@ -132,7 +153,20 @@ function FieldCanvas({
     }
 
     if (mode === 'select') {
-      onSelectionClear()
+      const point = getSvgPoint(event)
+      if (!event.shiftKey) {
+        onSelectionClear()
+      }
+      setMarquee({
+        startX: point.x,
+        startY: point.y,
+        currentX: point.x,
+        currentY: point.y,
+        pointerId: event.pointerId,
+        shouldToggle: event.shiftKey,
+        moved: false,
+      })
+      event.currentTarget.setPointerCapture?.(event.pointerId)
       return
     }
 
@@ -149,6 +183,44 @@ function FieldCanvas({
 
     onPerformerPositionsChange([...performerPositions, performer])
     onPerformerSelect(performer.id, false)
+  }
+
+  const handleFieldPointerMove = (event: PointerEvent<SVGSVGElement>) => {
+    if (!marquee || marquee.pointerId !== event.pointerId) {
+      return
+    }
+
+    const point = getSvgPoint(event)
+    setMarquee((current) => current ? {
+      ...current,
+      currentX: point.x,
+      currentY: point.y,
+      moved: current.moved || Math.hypot(point.x - current.startX, point.y - current.startY) >= 4,
+    } : null)
+  }
+
+  const finishBoxSelection = (event: PointerEvent<SVGSVGElement>) => {
+    if (!marquee || marquee.pointerId !== event.pointerId) {
+      return
+    }
+
+    if (!marquee.moved) {
+      onSelectionClear()
+    } else {
+      const minimumX = Math.min(marquee.startX, marquee.currentX)
+      const maximumX = Math.max(marquee.startX, marquee.currentX)
+      const minimumY = Math.min(marquee.startY, marquee.currentY)
+      const maximumY = Math.max(marquee.startY, marquee.currentY)
+      onBoxSelect(
+        performerPositions
+          .filter(({ x, y }) => x >= minimumX && x <= maximumX && y >= minimumY && y <= maximumY)
+          .map(({ id }) => id),
+        marquee.shouldToggle,
+      )
+    }
+
+    setMarquee(null)
+    event.currentTarget.releasePointerCapture?.(event.pointerId)
   }
 
   const updateZoom = (change: number) => {
@@ -179,6 +251,9 @@ function FieldCanvas({
             data-zoom={zoom}
             data-playback-active={editingDisabled}
             onPointerDown={handleFieldPointerDown}
+            onPointerMove={handleFieldPointerMove}
+            onPointerUp={finishBoxSelection}
+            onPointerCancel={() => setMarquee(null)}
           >
         <title>120-yard marching band football field</title>
         <rect className="field" width={fieldGeometry.svgWidth} height={fieldGeometry.svgHeight} />
@@ -221,6 +296,16 @@ function FieldCanvas({
             <text x={x} y={fieldGeometry.yardNumberPositionsSvg.bottom} textAnchor="middle" transform={`rotate(180 ${x} ${fieldGeometry.yardNumberPositionsSvg.bottom})`}>{value}</text>
           </g>
         ))}
+        {marquee?.moved && (
+          <rect
+            className="selection-marquee"
+            data-testid="selection-marquee"
+            x={Math.min(marquee.startX, marquee.currentX)}
+            y={Math.min(marquee.startY, marquee.currentY)}
+            width={Math.abs(marquee.currentX - marquee.startX)}
+            height={Math.abs(marquee.currentY - marquee.startY)}
+          />
+        )}
         {performerPositions.map((performer) => (
           <g
             key={performer.id}
@@ -460,6 +545,18 @@ function App() {
     })
   }
 
+  const selectPerformersInBox = (performerIds: string[], shouldToggle: boolean) => {
+    setSelectedPerformerIds((currentIds) => {
+      if (!shouldToggle) {
+        return performerIds
+      }
+
+      return performerIds.reduce((nextIds, performerId) => nextIds.includes(performerId)
+        ? nextIds.filter((id) => id !== performerId)
+        : [...nextIds, performerId], [...currentIds])
+    })
+  }
+
   const updatePerformerMetadata = (
     performerId: string,
     changes: Pick<Performer, 'label' | 'name' | 'section'>,
@@ -584,6 +681,25 @@ function App() {
     setCurrentCount(activeSet.counts)
   }
 
+  const applyFormation = (operation: FormationOperation) => {
+    if (isPreviewing || selectedPerformerIds.length < 2) {
+      return
+    }
+
+    updateActivePerformerPositions(applyFormationOperation(performerPositions, selectedPerformerIds, operation))
+  }
+
+  const duplicateSelection = () => {
+    if (isPreviewing || selectedPerformerIds.length === 0) {
+      return
+    }
+
+    const nextPerformers = duplicateSelectedPerformers(performerPositions, selectedPerformerIds)
+    const duplicateIds = nextPerformers.slice(performerPositions.length).map(({ id }) => id)
+    updateActivePerformerPositions(nextPerformers)
+    setSelectedPerformerIds(duplicateIds)
+  }
+
   return (
     <main className="app-shell">
       <header className="app-header">
@@ -628,6 +744,17 @@ function App() {
               <span className="selected-performer__label">{selectedPerformerIds.length} performers selected</span>
             </div>
           )}
+          {selectedPerformerIds.length > 0 && (
+            <section className="formation-tools" aria-label="Formation tools">
+              <div className="formation-tools__heading">Formation</div>
+              <button type="button" disabled={selectedPerformerIds.length < 2 || isPreviewing} onClick={() => applyFormation('alignHorizontal')}>Align horizontal</button>
+              <button type="button" disabled={selectedPerformerIds.length < 2 || isPreviewing} onClick={() => applyFormation('alignVertical')}>Align vertical</button>
+              <button type="button" disabled={selectedPerformerIds.length < 2 || isPreviewing} onClick={() => applyFormation('distributeHorizontal')}>Distribute horizontal</button>
+              <button type="button" disabled={selectedPerformerIds.length < 2 || isPreviewing} onClick={() => applyFormation('distributeVertical')}>Distribute vertical</button>
+              <button type="button" disabled={selectedPerformerIds.length < 2 || isPreviewing} onClick={() => applyFormation('makeLine')}>Make line</button>
+              <button type="button" disabled={isPreviewing} onClick={duplicateSelection}>Duplicate</button>
+            </section>
+          )}
         </aside>
 
         <div className="workspace">
@@ -638,6 +765,7 @@ function App() {
             selectedPerformerIds={selectedPerformerIds}
             onPerformerPositionsChange={updateActivePerformerPositions}
             onPerformerSelect={selectPerformer}
+            onBoxSelect={selectPerformersInBox}
             onSelectionClear={() => setSelectedPerformerIds([])}
           />
 

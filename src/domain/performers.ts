@@ -37,7 +37,10 @@ export const createPerformer = (
   existingPerformers: readonly Performer[],
 ): Performer => {
   const existingPlacementNumbers = existingPerformers
-    .map(({ label }) => /^P(\d+)$/.exec(label)?.[1])
+    .flatMap(({ id, label }) => [
+      /^p(\d+)$/.exec(id)?.[1],
+      /^P(\d+)$/.exec(label)?.[1],
+    ])
     .filter((number): number is string => number !== undefined)
     .map(Number)
   const placementNumber = Math.max(0, ...existingPlacementNumbers) + 1

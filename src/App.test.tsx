@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { vi } from 'vitest'
 import App from './App'
+import { fieldGeometry } from './domain/fieldGeometry'
 
 describe('App', () => {
   it('renders the initial drill design workspace', () => {
@@ -230,9 +231,9 @@ describe('App', () => {
 
     render(<App />)
     fireEvent.click(screen.getByRole('button', { name: 'Add set' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Play' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Play transition' }))
 
-    expect(screen.getByRole('button', { name: 'Play' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Play transition' })).toBeDisabled()
     act(() => vi.advanceTimersByTime(1016))
     expect(Number(screen.getByLabelText('Transition count').getAttribute('value'))).toBeGreaterThanOrEqual(2)
 
@@ -285,6 +286,226 @@ describe('App', () => {
 
     expect(screen.getByTestId('field-svg')).toHaveAttribute('data-zoom', '1.25')
     expect(screen.getByLabelText('Current zoom')).toHaveTextContent('125%')
+  })
+
+  it('box selects multiple performers and removes the marquee on release', () => {
+    render(<App />)
+    const svg = screen.getByTestId('field-svg')
+
+    Object.defineProperty(svg, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 1200, height: 533.3333333333334 }),
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Performer' }))
+    fireEvent(svg, new MouseEvent('pointerdown', { bubbles: true, clientX: 200, clientY: 200 }))
+    fireEvent(svg, new MouseEvent('pointerdown', { bubbles: true, clientX: 300, clientY: 300 }))
+    fireEvent.click(screen.getByRole('button', { name: 'Select' }))
+
+    fireEvent(svg, new MouseEvent('pointerdown', { bubbles: true, clientX: 150, clientY: 150 }))
+    fireEvent(svg, new MouseEvent('pointermove', { bubbles: true, clientX: 350, clientY: 350 }))
+    expect(screen.getByTestId('selection-marquee')).toBeInTheDocument()
+    fireEvent(svg, new MouseEvent('pointerup', { bubbles: true, clientX: 350, clientY: 350 }))
+
+    expect(screen.queryByTestId('selection-marquee')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Selected performers')).toHaveTextContent('2 performers selected')
+    expect(screen.getByTestId('performer-p1')).toHaveClass('performer-marker--selected')
+    expect(screen.getByTestId('performer-p2')).toHaveClass('performer-marker--selected')
+  })
+
+  it('box selects accurately at non-default zoom', () => {
+    render(<App />)
+    const svg = screen.getByTestId('field-svg')
+
+    Object.defineProperty(svg, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 2400, height: 1066.6666666666667 }),
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+    fireEvent(svg, new MouseEvent('pointerdown', { bubbles: true, clientX: 1100, clientY: 450 }))
+    fireEvent(svg, new MouseEvent('pointermove', { bubbles: true, clientX: 1300, clientY: 600 }))
+    fireEvent(svg, new MouseEvent('pointerup', { bubbles: true, clientX: 1300, clientY: 600 }))
+
+    expect(screen.getByLabelText('Selected performer')).toHaveTextContent('T1')
+  })
+
+  it('shift-box toggles performers without replacing the existing selection', () => {
+    render(<App />)
+    const svg = screen.getByTestId('field-svg')
+    const t1 = screen.getByTestId('performer-t1')
+
+    Object.defineProperty(svg, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 1200, height: 533.3333333333334 }),
+    })
+    Object.defineProperty(t1, 'setPointerCapture', { value: () => undefined })
+    fireEvent.click(screen.getByRole('button', { name: 'Performer' }))
+    fireEvent(svg, new MouseEvent('pointerdown', { bubbles: true, clientX: 200, clientY: 200 }))
+    fireEvent.click(screen.getByRole('button', { name: 'Select' }))
+    fireEvent(t1, new MouseEvent('pointerdown', { bubbles: true }))
+
+    const toggleP1 = () => {
+      fireEvent(svg, new MouseEvent('pointerdown', { bubbles: true, shiftKey: true, clientX: 175, clientY: 175 }))
+      fireEvent(svg, new MouseEvent('pointermove', { bubbles: true, shiftKey: true, clientX: 225, clientY: 225 }))
+      fireEvent(svg, new MouseEvent('pointerup', { bubbles: true, shiftKey: true, clientX: 225, clientY: 225 }))
+    }
+    toggleP1()
+    expect(screen.getByLabelText('Selected performers')).toHaveTextContent('2 performers selected')
+    toggleP1()
+    expect(screen.getByLabelText('Selected performer')).toHaveTextContent('T1')
+  })
+
+  it('clears selection when an empty-field gesture does not become a box', () => {
+    render(<App />)
+    const svg = screen.getByTestId('field-svg')
+    const performer = screen.getByTestId('performer-t1')
+
+    Object.defineProperty(svg, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 1200, height: 533.3333333333334 }),
+    })
+    Object.defineProperty(performer, 'setPointerCapture', { value: () => undefined })
+    fireEvent(performer, new MouseEvent('pointerdown', { bubbles: true }))
+    fireEvent(svg, new MouseEvent('pointerdown', { bubbles: true, clientX: 50, clientY: 50 }))
+    fireEvent(svg, new MouseEvent('pointerup', { bubbles: true, clientX: 50, clientY: 50 }))
+
+    expect(screen.queryByLabelText('Selected performer')).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['Align horizontal', 'cy'],
+    ['Align vertical', 'cx'],
+  ])('%s aligns only the selected performers', (action, attribute) => {
+    render(<App />)
+    const svg = screen.getByTestId('field-svg')
+
+    Object.defineProperty(svg, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 1200, height: 533.3333333333334 }),
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Performer' }))
+    fireEvent(svg, new MouseEvent('pointerdown', { bubbles: true, clientX: 200, clientY: 200 }))
+    fireEvent.click(screen.getByTestId('inventory-t1'))
+    fireEvent.click(screen.getByTestId('inventory-p1'), { shiftKey: true })
+    fireEvent.click(screen.getByRole('button', { name: action }))
+
+    const first = screen.getByTestId('performer-t1').querySelector('circle')
+    const second = screen.getByTestId('performer-p1').querySelector('circle')
+    expect(first?.getAttribute(attribute)).toBe(second?.getAttribute(attribute))
+  })
+
+  it.each([
+    ['Distribute horizontal', 'cx'],
+    ['Distribute vertical', 'cy'],
+  ])('%s spaces selected performers in stable order', (action, attribute) => {
+    render(<App />)
+    const svg = screen.getByTestId('field-svg')
+
+    Object.defineProperty(svg, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 1200, height: 533.3333333333334 }),
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Performer' }))
+    fireEvent(svg, new MouseEvent('pointerdown', { bubbles: true, clientX: 200, clientY: 150 }))
+    fireEvent(svg, new MouseEvent('pointerdown', { bubbles: true, clientX: 300, clientY: 250 }))
+    fireEvent(svg, new MouseEvent('pointerdown', { bubbles: true, clientX: 500, clientY: 400 }))
+    fireEvent.click(screen.getByTestId('inventory-p1'))
+    fireEvent.click(screen.getByTestId('inventory-p2'), { shiftKey: true })
+    fireEvent.click(screen.getByTestId('inventory-p3'), { shiftKey: true })
+    fireEvent.click(screen.getByRole('button', { name: action }))
+
+    const coordinates = ['p1', 'p2', 'p3'].map((id) => Number(
+      screen.getByTestId(`performer-${id}`).querySelector('circle')?.getAttribute(attribute),
+    ))
+    expect(Math.abs(
+      (coordinates[1] - coordinates[0]) - (coordinates[2] - coordinates[1]),
+    )).toBeLessThan(fieldGeometry.marchingStepSizeSvg)
+  })
+
+  it('makes a snapped straight line using selection-order endpoints', () => {
+    render(<App />)
+    const svg = screen.getByTestId('field-svg')
+
+    Object.defineProperty(svg, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 1200, height: 533.3333333333334 }),
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Performer' }))
+    fireEvent(svg, new MouseEvent('pointerdown', { bubbles: true, clientX: 200, clientY: 150 }))
+    fireEvent(svg, new MouseEvent('pointerdown', { bubbles: true, clientX: 300, clientY: 400 }))
+    fireEvent(svg, new MouseEvent('pointerdown', { bubbles: true, clientX: 500, clientY: 300 }))
+    fireEvent.click(screen.getByTestId('inventory-p1'))
+    fireEvent.click(screen.getByTestId('inventory-p2'), { shiftKey: true })
+    fireEvent.click(screen.getByTestId('inventory-p3'), { shiftKey: true })
+    fireEvent.click(screen.getByRole('button', { name: 'Make line' }))
+
+    expect(screen.getByTestId('performer-p2').querySelector('circle')).toHaveAttribute('cx', '350')
+  })
+
+  it('duplicates selected metadata with new identity and applies formation edits only to the active set', () => {
+    render(<App />)
+    const svg = screen.getByTestId('field-svg')
+
+    Object.defineProperty(svg, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 1200, height: 533.3333333333334 }),
+    })
+    fireEvent.change(screen.getByLabelText('Name for T1'), { target: { value: 'Taylor' } })
+    fireEvent.change(screen.getByLabelText('Section for T1'), { target: { value: 'Clarinet' } })
+    fireEvent.click(screen.getByTestId('inventory-t1'))
+    fireEvent.click(screen.getByRole('button', { name: 'Duplicate' }))
+    expect(screen.getByTestId('performer-p1')).toHaveTextContent('P1')
+    expect(screen.getByLabelText('Name for P1')).toHaveValue('Taylor')
+    expect(screen.getByLabelText('Section for P1')).toHaveValue('Clarinet')
+
+    const setOneT1X = screen.getByTestId('performer-t1').querySelector('circle')?.getAttribute('cx')
+    const setOneP1X = screen.getByTestId('performer-p1').querySelector('circle')?.getAttribute('cx')
+    fireEvent.click(screen.getByRole('button', { name: 'Add set' }))
+    fireEvent.click(screen.getByTestId('inventory-t1'))
+    fireEvent.click(screen.getByTestId('inventory-p1'), { shiftKey: true })
+    fireEvent.click(screen.getByRole('button', { name: 'Align vertical' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Set 1' }))
+    expect(screen.getByTestId('performer-t1').querySelector('circle')).toHaveAttribute('cx', setOneT1X)
+    expect(screen.getByTestId('performer-p1').querySelector('circle')).toHaveAttribute('cx', setOneP1X)
+  })
+
+  it('disables formation tools and box selection during playback', () => {
+    render(<App />)
+    const svg = screen.getByTestId('field-svg')
+
+    Object.defineProperty(svg, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 1200, height: 533.3333333333334 }),
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Performer' }))
+    fireEvent(svg, new MouseEvent('pointerdown', { bubbles: true, clientX: 200, clientY: 200 }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add set' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Play transition' }))
+    fireEvent.click(screen.getByTestId('inventory-t1'))
+    fireEvent.click(screen.getByTestId('inventory-p1'), { shiftKey: true })
+
+    expect(screen.getByRole('button', { name: 'Align horizontal' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Duplicate' })).toBeDisabled()
+    fireEvent(svg, new MouseEvent('pointerdown', { bubbles: true, clientX: 100, clientY: 100 }))
+    fireEvent(svg, new MouseEvent('pointermove', { bubbles: true, clientX: 400, clientY: 400 }))
+    expect(screen.queryByTestId('selection-marquee')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+  })
+
+  it('scrubs full-production playback cumulatively without changing zoom or the active editing set', () => {
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add set' }))
+    fireEvent.change(screen.getByLabelText('Counts for Set 2'), { target: { value: '16' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add set' }))
+    fireEvent.change(screen.getByLabelText('Counts for Set 3'), { target: { value: '8' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Play from start' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Pause' }))
+    fireEvent.change(screen.getByLabelText('Production count'), { target: { value: '20' } })
+
+    expect(screen.getByLabelText('Current count')).toHaveTextContent('4 / 8')
+    expect(screen.getByLabelText('Production progress')).toHaveTextContent('20 / 24')
+    expect(screen.getByTestId('drill-set-set-3')).toHaveClass('set-card--active')
+    expect(screen.getByTestId('drill-set-set-3')).toHaveClass('set-card--playback')
+    expect(screen.getByLabelText('Current zoom')).toHaveTextContent('125%')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Restart' }))
+    expect(screen.getByLabelText('Production count')).toHaveValue('0')
+    fireEvent.click(screen.getByRole('button', { name: 'Resume' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Pause' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
+    expect(screen.getByTestId('drill-set-set-3')).toHaveClass('set-card--active')
+    expect(screen.getByTestId('drill-set-set-3')).not.toHaveClass('set-card--playback')
   })
 
   it('edits performer metadata from the inventory and updates the field immediately', () => {
