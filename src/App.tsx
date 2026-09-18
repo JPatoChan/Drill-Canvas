@@ -23,6 +23,13 @@ import {
   getPerformersForSet,
   type DrillSet,
 } from './domain/drillSets'
+import {
+  getMillisecondsPerCount,
+  getProductionPerformerPositions,
+  getProductionPlaybackPoint,
+  getTotalProductionCounts,
+  interpolatePerformerPositions,
+} from './domain/playback'
 
 const toolbarItems = ['Select', 'Performer', 'Path', 'Measure']
 const fiveYardLinePositions = getFiveYardLinePositions()
@@ -38,8 +45,11 @@ const initialDrillSet: DrillSet = {
   performerPositions: performers.map(getPerformerPosition),
 }
 
+type PlaybackMode = 'transition' | 'production' | null
+
 type FieldCanvasProps = {
   mode: 'select' | 'performer'
+  editingDisabled: boolean
   performerPositions: readonly Performer[]
   selectedPerformerIds: readonly string[]
   onPerformerPositionsChange: (performers: Performer[]) => void
@@ -49,6 +59,7 @@ type FieldCanvasProps = {
 
 function FieldCanvas({
   mode,
+  editingDisabled,
   performerPositions,
   selectedPerformerIds,
   onPerformerPositionsChange,
@@ -85,6 +96,11 @@ function FieldCanvas({
 
   const handlePerformerPointerDown = (event: PointerEvent<SVGGElement>, performer: Performer) => {
     event.stopPropagation()
+
+    if (editingDisabled) {
+      return
+    }
+
     const isSelected = selectedPerformerIds.includes(performer.id)
 
     if (event.shiftKey) {
@@ -111,6 +127,10 @@ function FieldCanvas({
   }
 
   const handleFieldPointerDown = (event: PointerEvent<SVGSVGElement>) => {
+    if (editingDisabled) {
+      return
+    }
+
     if (mode === 'select') {
       onSelectionClear()
       return
@@ -157,6 +177,7 @@ function FieldCanvas({
             aria-label="Marching football field"
             data-testid="field-svg"
             data-zoom={zoom}
+            data-playback-active={editingDisabled}
             onPointerDown={handleFieldPointerDown}
           >
         <title>120-yard marching band football field</title>
@@ -208,7 +229,7 @@ function FieldCanvas({
             data-testid={`performer-${performer.id}`}
             onPointerDown={(event) => handlePerformerPointerDown(event, performer)}
             onPointerMove={(event) => {
-              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+              if (!editingDisabled && event.currentTarget.hasPointerCapture(event.pointerId)) {
                 if (dragState.current) {
                   dragState.current.moved = true
                 }
@@ -321,8 +342,45 @@ function App() {
   const [activeSetId, setActiveSetId] = useState(initialDrillSet.id)
   const [selectedPerformerIds, setSelectedPerformerIds] = useState<string[]>([])
   const [mode, setMode] = useState<'select' | 'performer'>('select')
+  const [playbackMode, setPlaybackMode] = useState<PlaybackMode>(null)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [currentCount, setCurrentCount] = useState(0)
+  const [productionCount, setProductionCount] = useState(0)
+  const [tempo, setTempo] = useState(120)
   const activeSet = drillSets.find(({ id }) => id === activeSetId) ?? drillSets[0]
+  const activeSetIndex = drillSets.findIndex(({ id }) => id === activeSet.id)
+  const transitionStartSet = activeSetIndex > 0 ? drillSets[activeSetIndex - 1] : undefined
   const performerPositions = getPerformersForSet(performerMetadata, activeSet)
+  const totalProductionCounts = getTotalProductionCounts(drillSets)
+  const productionPlaybackPoint = getProductionPlaybackPoint(drillSets, productionCount)
+  const isPreviewing = playbackMode !== null
+  const playbackSetIndex = playbackMode === 'production' && productionPlaybackPoint
+    ? productionPlaybackPoint.localCount === 0
+      ? productionPlaybackPoint.startSetIndex
+      : productionPlaybackPoint.destinationSetIndex
+    : activeSetIndex
+  const playbackPositions = playbackMode === 'production'
+    ? getPerformersForSet(performerMetadata, {
+        ...activeSet,
+        performerPositions: getProductionPerformerPositions(drillSets, productionCount),
+      })
+    : playbackMode === 'transition' && transitionStartSet
+      ? getPerformersForSet(performerMetadata, {
+        ...activeSet,
+        performerPositions: interpolatePerformerPositions(
+          transitionStartSet.performerPositions,
+          activeSet.performerPositions,
+          currentCount,
+          activeSet.counts,
+        ),
+      })
+      : performerPositions
+  const displayedLocalCount = playbackMode === 'production'
+    ? productionPlaybackPoint?.localCount ?? 0
+    : currentCount
+  const displayedTransitionCounts = playbackMode === 'production'
+    ? productionPlaybackPoint?.transitionCounts ?? 0
+    : activeSet.counts
   const selectedPerformer = selectedPerformerIds.length === 1
     ? performerPositions.find((performer) => performer.id === selectedPerformerIds[0])
     : undefined
@@ -337,6 +395,7 @@ function App() {
       if (
         (event.key !== 'Backspace' && event.key !== 'Delete')
         || selectedPerformerIds.length === 0
+        || isPreviewing
         || isEditableTarget
       ) {
         return
@@ -356,7 +415,38 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [selectedPerformerIds])
+  }, [isPreviewing, selectedPerformerIds])
+
+  useEffect(() => {
+    if (!isPlaying || !playbackMode) {
+      return
+    }
+
+    const startedAt = performance.now()
+    const startingCount = playbackMode === 'production' ? productionCount : currentCount
+    const finalCount = playbackMode === 'production' ? totalProductionCounts : activeSet.counts
+    let animationFrame = 0
+
+    const updatePlayback = (timestamp: number) => {
+      const elapsedCounts = (timestamp - startedAt) / getMillisecondsPerCount(tempo)
+      const nextCount = Math.min(finalCount, startingCount + elapsedCounts)
+
+      if (playbackMode === 'production') {
+        setProductionCount(nextCount)
+      } else {
+        setCurrentCount(nextCount)
+      }
+      if (nextCount >= finalCount) {
+        setIsPlaying(false)
+        return
+      }
+
+      animationFrame = requestAnimationFrame(updatePlayback)
+    }
+
+    animationFrame = requestAnimationFrame(updatePlayback)
+    return () => cancelAnimationFrame(animationFrame)
+  }, [activeSet.counts, activeSet.id, isPlaying, playbackMode, tempo, totalProductionCounts])
 
   const selectPerformer = (performerId: string, shouldToggle: boolean) => {
     setSelectedPerformerIds((currentIds) => {
@@ -408,11 +498,19 @@ function App() {
     setDrillSets((currentSets) => [...currentSets, newSet])
     setActiveSetId(newSet.id)
     setSelectedPerformerIds([])
+    setIsPlaying(false)
+    setPlaybackMode(null)
+    setCurrentCount(newSet.counts)
   }
 
   const activateDrillSet = (drillSetId: string) => {
+    const nextSet = drillSets.find(({ id }) => id === drillSetId)
+
     setActiveSetId(drillSetId)
     setSelectedPerformerIds([])
+    setIsPlaying(false)
+    setPlaybackMode(null)
+    setCurrentCount(nextSet?.counts ?? 0)
   }
 
   const updateDrillSetCounts = (drillSetId: string, counts: number) => {
@@ -420,11 +518,70 @@ function App() {
       return
     }
 
+    const nextCounts = Math.max(1, Math.floor(counts))
+
     setDrillSets((currentSets) => currentSets.map((drillSet, index) =>
       drillSet.id === drillSetId && index > 0
-        ? { ...drillSet, counts: Math.max(1, Math.floor(counts)) }
+        ? { ...drillSet, counts: nextCounts }
         : drillSet,
     ))
+    if (drillSetId === activeSetId) {
+      setCurrentCount((count) => count >= activeSet.counts ? nextCounts : Math.min(count, nextCounts))
+    }
+  }
+
+  const playTransition = () => {
+    if (!transitionStartSet) {
+      return
+    }
+
+    setSelectedPerformerIds([])
+    setCurrentCount((count) => count >= activeSet.counts ? 0 : count)
+    setPlaybackMode('transition')
+    setIsPlaying(true)
+  }
+
+  const playProduction = () => {
+    if (drillSets.length < 2) {
+      return
+    }
+
+    setSelectedPerformerIds([])
+    setProductionCount(0)
+    setPlaybackMode('production')
+    setIsPlaying(true)
+  }
+
+  const resumePlayback = () => {
+    if (!playbackMode) {
+      return
+    }
+
+    const playbackCount = playbackMode === 'production' ? productionCount : currentCount
+    const finalCount = playbackMode === 'production' ? totalProductionCounts : activeSet.counts
+
+    if (playbackCount < finalCount) {
+      setIsPlaying(true)
+    }
+  }
+
+  const restartPlayback = () => {
+    if (!playbackMode) {
+      return
+    }
+
+    setIsPlaying(false)
+    if (playbackMode === 'production') {
+      setProductionCount(0)
+    } else {
+      setCurrentCount(0)
+    }
+  }
+
+  const stopPlayback = () => {
+    setIsPlaying(false)
+    setPlaybackMode(null)
+    setCurrentCount(activeSet.counts)
   }
 
   return (
@@ -476,7 +633,8 @@ function App() {
         <div className="workspace">
           <FieldCanvas
             mode={mode}
-            performerPositions={performerPositions}
+            editingDisabled={isPreviewing}
+            performerPositions={playbackPositions}
             selectedPerformerIds={selectedPerformerIds}
             onPerformerPositionsChange={updateActivePerformerPositions}
             onPerformerSelect={selectPerformer}
@@ -489,12 +647,55 @@ function App() {
                 <span className="timeline__eyebrow">Production</span>
                 <h1>Drill sets</h1>
               </div>
+              <div className="playback-controls" aria-label="Transition playback controls">
+                <button type="button" onClick={playTransition} disabled={!transitionStartSet || isPlaying}>Play transition</button>
+                <button type="button" onClick={playProduction} disabled={drillSets.length < 2 || isPlaying}>Play from start</button>
+                <button type="button" onClick={() => setIsPlaying(false)} disabled={!isPlaying}>Pause</button>
+                <button type="button" onClick={resumePlayback} disabled={!playbackMode || isPlaying}>Resume</button>
+                <button type="button" onClick={restartPlayback} disabled={!playbackMode}>Restart</button>
+                <button type="button" onClick={stopPlayback} disabled={!playbackMode}>Stop</button>
+                <label className="tempo-control">
+                  <span>Tempo</span>
+                  <input
+                    type="number"
+                    min="40"
+                    max="240"
+                    value={tempo}
+                    aria-label="Playback tempo"
+                    onChange={(event) => setTempo(Math.min(240, Math.max(40, event.target.valueAsNumber || 40)))}
+                  />
+                  <span>BPM</span>
+                </label>
+                <div className="playback-progress">
+                  <output aria-label="Current count">{Math.floor(displayedLocalCount)} / {displayedTransitionCounts}</output>
+                  <output aria-label="Production progress">{Math.floor(playbackMode === 'production' ? productionCount : 0)} / {totalProductionCounts}</output>
+                </div>
+              </div>
               <button className="add-set" type="button" onClick={addDrillSet}>Add set</button>
             </div>
+            <input
+              className="transition-playhead"
+              type="range"
+              min="0"
+              max={playbackMode === 'production' ? totalProductionCounts : activeSet.counts}
+              step="0.1"
+              value={playbackMode === 'production' ? productionCount : currentCount}
+              disabled={playbackMode === 'production' ? drillSets.length < 2 : !transitionStartSet}
+              aria-label={playbackMode === 'production' ? 'Production count' : 'Transition count'}
+              onChange={(event) => {
+                setIsPlaying(false)
+                if (playbackMode === 'production') {
+                  setProductionCount(event.target.valueAsNumber)
+                } else {
+                  setPlaybackMode('transition')
+                  setCurrentCount(event.target.valueAsNumber)
+                }
+              }}
+            />
             <div className="set-track" role="list" aria-label="Drill sets">
               {drillSets.map((drillSet, index) => (
                 <div
-                  className={`set-card${drillSet.id === activeSetId ? ' set-card--active' : ''}`}
+                  className={`set-card${drillSet.id === activeSetId ? ' set-card--active' : ''}${playbackMode === 'production' && index === playbackSetIndex ? ' set-card--playback' : ''}`}
                   role="listitem"
                   key={drillSet.id}
                   data-testid={`drill-set-${drillSet.id}`}
@@ -516,6 +717,7 @@ function App() {
                         min="1"
                         value={drillSet.counts}
                         aria-label={`Counts for ${drillSet.name}`}
+                        disabled={isPreviewing}
                         onChange={(event) => updateDrillSetCounts(drillSet.id, event.target.valueAsNumber)}
                       />
                       <span>counts</span>

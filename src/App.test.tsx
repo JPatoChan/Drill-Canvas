@@ -1,4 +1,5 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
+import { vi } from 'vitest'
 import App from './App'
 
 describe('App', () => {
@@ -170,6 +171,119 @@ describe('App', () => {
     expect(screen.queryByLabelText('Selected performer')).not.toBeInTheDocument()
     expect(screen.getByLabelText('Current zoom')).toHaveTextContent('125%')
     fireEvent.click(screen.getByRole('button', { name: 'Set 1' }))
+    expect(screen.getByLabelText('Current zoom')).toHaveTextContent('125%')
+  })
+
+  it('scrubs Set 1 to Set 2 through exact start, halfway, and destination positions', () => {
+    render(<App />)
+    const svg = screen.getByTestId('field-svg')
+    const performer = screen.getByTestId('performer-t1')
+
+    Object.defineProperty(svg, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 1200, height: 533.3333333333334 }),
+    })
+    Object.defineProperty(performer, 'setPointerCapture', { value: () => undefined })
+    Object.defineProperty(performer, 'hasPointerCapture', { value: () => true })
+    fireEvent.click(screen.getByRole('button', { name: 'Add set' }))
+    fireEvent(performer, new MouseEvent('pointerdown', { bubbles: true }))
+    fireEvent(performer, new MouseEvent('pointermove', { bubbles: true, clientX: 800, clientY: 262.5 }))
+
+    const playhead = screen.getByLabelText('Transition count')
+    fireEvent.change(playhead, { target: { value: '0' } })
+    expect(performer.querySelector('circle')).toHaveAttribute('cx', '600')
+    expect(screen.getByLabelText('Current count')).toHaveTextContent('0 / 16')
+
+    fireEvent.change(playhead, { target: { value: '8' } })
+    expect(performer.querySelector('circle')).toHaveAttribute('cx', '700')
+    expect(screen.getByLabelText('Current count')).toHaveTextContent('8 / 16')
+
+    fireEvent.change(playhead, { target: { value: '16' } })
+    expect(performer.querySelector('circle')).toHaveAttribute('cx', '800')
+    expect(screen.getByLabelText('Current count')).toHaveTextContent('16 / 16')
+  })
+
+  it('uses edited transition lengths when scrubbing', () => {
+    render(<App />)
+    const svg = screen.getByTestId('field-svg')
+    const performer = screen.getByTestId('performer-t1')
+
+    Object.defineProperty(svg, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 1200, height: 533.3333333333334 }),
+    })
+    Object.defineProperty(performer, 'setPointerCapture', { value: () => undefined })
+    Object.defineProperty(performer, 'hasPointerCapture', { value: () => true })
+    fireEvent.click(screen.getByRole('button', { name: 'Add set' }))
+    fireEvent(performer, new MouseEvent('pointerdown', { bubbles: true }))
+    fireEvent(performer, new MouseEvent('pointermove', { bubbles: true, clientX: 840, clientY: 262.5 }))
+    fireEvent.change(screen.getByLabelText('Counts for Set 2'), { target: { value: '24' } })
+    fireEvent.change(screen.getByLabelText('Transition count'), { target: { value: '12' } })
+
+    expect(performer.querySelector('circle')).toHaveAttribute('cx', '718.75')
+    expect(screen.getByLabelText('Current count')).toHaveTextContent('12 / 24')
+  })
+
+  it('plays, pauses, and restarts using BPM count timing', () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) =>
+      window.setTimeout(() => callback(performance.now()), 16))
+    vi.stubGlobal('cancelAnimationFrame', (handle: number) => window.clearTimeout(handle))
+
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Add set' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Play' }))
+
+    expect(screen.getByRole('button', { name: 'Play' })).toBeDisabled()
+    act(() => vi.advanceTimersByTime(1016))
+    expect(Number(screen.getByLabelText('Transition count').getAttribute('value'))).toBeGreaterThanOrEqual(2)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pause' }))
+    const pausedCount = (screen.getByLabelText('Transition count') as HTMLInputElement).value
+    act(() => vi.advanceTimersByTime(1000))
+    expect(screen.getByLabelText('Transition count')).toHaveValue(pausedCount)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Restart' }))
+    expect(screen.getByLabelText('Transition count')).toHaveValue('0')
+    expect(screen.getByLabelText('Current count')).toHaveTextContent('0 / 16')
+
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  it('keeps transient playback read-only and stored set positions unchanged', () => {
+    render(<App />)
+    const svg = screen.getByTestId('field-svg')
+    const performer = screen.getByTestId('performer-t1')
+
+    Object.defineProperty(svg, 'getBoundingClientRect', {
+      value: () => ({ left: 0, top: 0, width: 1200, height: 533.3333333333334 }),
+    })
+    Object.defineProperty(performer, 'setPointerCapture', { value: () => undefined })
+    Object.defineProperty(performer, 'hasPointerCapture', { value: () => true })
+    fireEvent.click(screen.getByRole('button', { name: 'Add set' }))
+    fireEvent(performer, new MouseEvent('pointerdown', { bubbles: true }))
+    fireEvent(performer, new MouseEvent('pointermove', { bubbles: true, clientX: 800, clientY: 262.5 }))
+    fireEvent.change(screen.getByLabelText('Transition count'), { target: { value: '8' } })
+    expect(performer.querySelector('circle')).toHaveAttribute('cx', '700')
+
+    fireEvent(performer, new MouseEvent('pointerdown', { bubbles: true }))
+    fireEvent(performer, new MouseEvent('pointermove', { bubbles: true, clientX: 900, clientY: 262.5 }))
+    expect(performer.querySelector('circle')).toHaveAttribute('cx', '700')
+    fireEvent.change(screen.getByLabelText('Transition count'), { target: { value: '16' } })
+    expect(performer.querySelector('circle')).toHaveAttribute('cx', '800')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set 1' }))
+    expect(performer.querySelector('circle')).toHaveAttribute('cx', '600')
+    fireEvent.click(screen.getByRole('button', { name: 'Set 2' }))
+    expect(performer.querySelector('circle')).toHaveAttribute('cx', '800')
+  })
+
+  it('previews playback positions without changing non-default zoom', () => {
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add set' }))
+    fireEvent.change(screen.getByLabelText('Transition count'), { target: { value: '8' } })
+
+    expect(screen.getByTestId('field-svg')).toHaveAttribute('data-zoom', '1.25')
     expect(screen.getByLabelText('Current zoom')).toHaveTextContent('125%')
   })
 
